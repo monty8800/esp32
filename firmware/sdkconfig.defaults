@@ -1,0 +1,66 @@
+# sdkconfig.defaults for ESP32-S3-Touch-LCD-4B firmware (IDF v6.0.2)
+#
+# Values mirror the official Waveshare example sdkconfig.defaults
+# (examples/esp-idf/02_lvgl_demo_v9) where applicable, plus the
+# project-level requirements (OTA-ready 16MB layout, custom lv_conf.h).
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# --- Flash: 16MB QIO ---
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# --- Partition table: OTA-capable, see partitions.csv ---
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# --- PSRAM (octal, 80MHz) ---
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+# Small allocations stay in internal RAM; bigger ones (frame buffers, LVGL
+# pools) may go to PSRAM.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
+# Same cache line tuning as the official example.
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+
+# --- CPU / TLS ---
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+# Route mbedTLS buffers (16KB SSL in-buffer + handshake scratch) to PSRAM.
+# The default INTERNAL_MEM_ALLOC made the weather HTTPS handshake fail with
+# MBEDTLS_ERR_SSL_ALLOC_FAILED (-0x008D) at boot: internal RAM is already
+# claimed by WiFi/lwIP/LVGL/SNTP and ssl_setup needs ~30-40KB at once.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+
+# --- FreeRTOS ---
+CONFIG_FREERTOS_HZ=1000
+
+# --- LVGL: config comes from firmware/lv_conf.h via -DLV_CONF_PATH ---
+# (see firmware/CMakeLists.txt; CONFIG_LV_* Kconfig values are ignored
+#  because lv_conf.h is still force-included through LV_CONF_PATH)
+CONFIG_LV_CONF_SKIP=y
+
+# --- Task sizing ---
+# app_main does NVS + display + touch + backlight + LVGL UI setup.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+# net_worker runs in a pthread created with the DEFAULT attr: its stack is
+# this value. One HTTP round touches two full server_snapshot_t frames on
+# the same call chain (fresh copy + parse tmp, ~31KB together) on top of
+# esp_http_client + mbedTLS scratch - 40KB keeps TLS handshakes safe.
+CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=40960
+
+# --- WiFi ---
+# Reconnect storms + TLS keep the stack busy; give the WiFi task slack.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=32
+
+# --- Console ---
+# The serial `cfg` provisioning REPL (esp_console, UART0) ships enabled by
+# default; nothing extra to set here.
+
+# --- Compiler ---
+CONFIG_COMPILER_OPTIMIZATION_PERF=y

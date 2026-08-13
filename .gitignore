@@ -1,6 +1,5 @@
 # 构建产物
 build/
-build_dbg/
 
 # macOS 临时文件
 .DS_Store
@@ -14,3 +13,9 @@ build_dbg/
 
 # 本地 token / 凭证文件
 .ha_esp32_token
+
+# 厂商参考仓库（约 1GB，可重新下载，不入库）
+ESP32-S3-Touch-LCD-4B-chore-initial-resource-import/
+
+# AI 规划文档
+.qoder/

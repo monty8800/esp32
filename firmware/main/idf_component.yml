@@ -1,0 +1,17 @@
+## IDF Component Manager manifest for the ESP32-S3-Touch-LCD-4B firmware.
+##
+## Versions chosen to match what the official Waveshare BSP
+## (waveshare/esp32_s3_touch_lcd_4b v2.0.0) declares as compatible,
+## while keeping our own BSP code in this component instead of pulling
+## the vendor BSP.
+dependencies:
+  idf: ">=5.4"
+  lvgl/lvgl: "^9.3"
+  espressif/esp_lvgl_port: "^2"
+  espressif/esp_lcd_st7701: "^1"
+  espressif/esp_lcd_touch_gt911: "^1"
+  espressif/esp_lcd_panel_io_additions: "^1"
+  espressif/esp_io_expander_tca9554: "^2"
+  # esp_lcd_touch base component (transitive via gt911, pinned explicitly
+  # for stable API usage in bsp_touch.c)
+  espressif/esp_lcd_touch: "^1"
