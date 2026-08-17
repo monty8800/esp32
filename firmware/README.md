@@ -26,7 +26,7 @@ idf.py -p /dev/cu.usbmodem* flash monitor
 
 - **LVGL**：组件声明 `^9.3`，组件管理器实际解析到 **9.5.0**（见
   `dependencies.lock`）；仿真器已退役，UI 源码统一维护在
-  `main/business/ui/`（arduino/ 移植版另持一份同步副本）。
+  `main/business/ui/`。
 - **lv_conf**：`firmware/lv_conf.h`（RGB565 + libc malloc），经
   `-DLV_CONF_INCLUDE_SIMPLE` + `LV_CONF_PATH` 接入，细节见其头部注释。
 - **mbedtls 内存**：`CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y`（sdkconfig.defaults），

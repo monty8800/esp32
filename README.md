@@ -35,7 +35,6 @@ firmware/    ESP-IDF v6.0.2 真机固件（主目标，见 firmware/README.md）
   main/business/   UI 与网络层（从已退役的 macOS 仿真器迁移而来）
   main/curl_shim/  libcurl 子集 shim（esp_http_client 后端）
   main/fonts/      CJK 位图字体生成管线（gen_fonts.sh）
-arduino/     PlatformIO / Arduino 框架移植版（ha_panel sketch）
 docs/        开发板硬件资料
 ```
 
@@ -57,15 +56,6 @@ idf.py -p /dev/cu.usbmodem* flash monitor
   自动下载（`main/idf_component.yml`），需要网络
 - 分区表：`ota_0` / `ota_1` 各 7.1MB + 2MB storage；app 当前约 3MB
 - 首次启动无 WiFi 凭据时，点状态栏齿轮完成配网，其余配置经 Web 配置页写入
-
-## Arduino 移植版（arduino/）
-
-- PlatformIO 工程，使用 **pioarduino fork**（arduino-esp32 3.x，官方
-  espressif32 platform 停在 2.x 不可用）
-- Octal PSRAM 硬性前提：`qio_opi` + `psram=enabled`（已写入 `platformio.ini`）
-- LVGL 9.5.0 经 Library Manager 引入，`lv_conf.h` 位于工程根
-  （`-DLV_CONF_INCLUDE_SIMPLE`）
-- 编译烧录：`pio run -e esp32-s3-lcd4b -t upload`
 
 ## CJK 字体管线（firmware/main/fonts/）
 
