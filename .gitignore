@@ -10,12 +10,16 @@ build/
 # IDE / 编辑器
 .vscode/
 .idea/
+.clangd
 
 # 本地 token / 凭证文件
 .ha_esp32_token
 
-# 厂商参考仓库（约 1GB，可重新下载，不入库）
+# 厂商参考仓库（可重新下载，不入库）
 ESP32-S3-Touch-LCD-4B-chore-initial-resource-import/
+esp-brookesia-reference/
+esp-board-manager-reference/
+gen_bmgr_codes.bak/
 
 # AI 规划文档
 .qoder/
