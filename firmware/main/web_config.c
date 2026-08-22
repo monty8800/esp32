@@ -415,8 +415,9 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "else{alert('恢复失败')}}).catch(function(){alert('恢复失败');})}"
         "(function(){fetch('/check_update').then(function(r){return r.json();}).then(function(d){"
         "document.getElementById('ver_info').textContent='当前: '+d.current_version;"
-        "return fetch(d.readme_url,{cache:'no-store'});"
-        "}).then(function(r){return r.text();}).then(function(text){"
+        "return fetch(d.readme_url,{cache:'no-store'}).then(function(r){"
+        "if(!r.ok)throw new Error('HTTP '+r.status);return r.text();"
+        "}).then(function(text){"
         "var m=text.match(/LATEST:\\s*(\\S+)\\s+(\\S+)/);"
         "if(m){var latest=m[1],url=m[2];"
         "var cv=document.getElementById('ver_info').textContent.replace('当前: ','');"
@@ -427,7 +428,8 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "document.getElementById('update_link').href=url;"
         "document.getElementById('update_link').textContent=latest;"
         "updateOtaBtn();}}"
-        "}).catch(function(){document.getElementById('ver_info').textContent+=' (检查失败)';})})();"
+        "else{document.getElementById('ver_info').textContent+=' (未找到版本信息)';}}"
+        ").catch(function(e){document.getElementById('ver_info').textContent+=' (网络错误: '+e.message+')';})})();"
         "</script>\n"
         "</div></body></html>");
 
