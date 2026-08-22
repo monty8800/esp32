@@ -46,6 +46,7 @@ idf_component_register(
         esp_timer
         esp_http_client
         spiffs
+        app_update
     PRIV_REQUIRES
         esp_lvgl_port
         lvgl

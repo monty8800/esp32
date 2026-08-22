@@ -4,7 +4,7 @@
  * Page 4: single photo display.
  *
  * Loads one JPEG image (from SPIFFS or HTTP URL) and displays it.
- * No slideshow, no carousel, no controls - just a static image.
+ * Uses LVGL's built-in JPEG decoder with memfs.
  */
 
 #include "photos_page.h"
@@ -28,6 +28,10 @@ static const char *TAG = "photos";
  *----------------------------*/
 static lv_obj_t * img_widget;
 static lv_obj_t * status_label;
+
+/* JPEG buffer - kept alive for LVGL decoder */
+static uint8_t * jpeg_buf = NULL;
+static uint32_t  jpeg_buf_size = 0;
 
 /*-----------------------------
  * HTTP download helper
@@ -116,7 +120,6 @@ static void load_and_display_photo(const char * source_url)
     esp_err_t err = ESP_FAIL;
 
     if (strcmp(source_url, "local://spiffs") == 0) {
-        /* Load first (and only) photo from SPIFFS. */
         int count = photo_storage_count();
         if (count > 0) {
             err = photo_storage_load(1, &jpeg, &jpeg_sz);
@@ -127,7 +130,6 @@ static void load_and_display_photo(const char * source_url)
             ESP_LOGW(TAG, "no local photos in SPIFFS");
         }
     } else {
-        /* HTTP mode: download directly. */
         err = download_to_psram(source_url, &jpeg, &jpeg_sz);
         if (err == ESP_OK) {
             ESP_LOGI(TAG, "downloaded photo (%lu bytes)", (unsigned long)jpeg_sz);
@@ -142,6 +144,13 @@ static void load_and_display_photo(const char * source_url)
         return;
     }
 
+    /* Free old JPEG buffer if any */
+    if (jpeg_buf != NULL) {
+        free(jpeg_buf);
+    }
+    jpeg_buf = jpeg;
+    jpeg_buf_size = jpeg_sz;
+
     /* Create LVGL image descriptor and set it. */
     static lv_image_dsc_t dsc;
     fill_jpeg_dsc(&dsc, jpeg, jpeg_sz);
@@ -152,8 +161,6 @@ static void load_and_display_photo(const char * source_url)
 
     /* Hide placeholder. */
     if(status_label) lv_obj_add_flag(status_label, LV_OBJ_FLAG_HIDDEN);
-
-    /* Note: jpeg buffer is intentionally NOT freed - LVGL holds a reference. */
 }
 
 /*-----------------------------

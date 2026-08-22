@@ -26,6 +26,9 @@
 
 #include "config_store.h"
 #include "photo_storage.h"
+#include "esp_ota_ops.h"
+#include "esp_partition.h"
+#include "nvs.h"
 
 static const char *TAG = "webcfg";
 
@@ -33,6 +36,8 @@ static httpd_handle_t s_server = NULL;
 
 static esp_err_t upload_post_handler(httpd_req_t *req);
 static esp_err_t clear_photos_handler(httpd_req_t *req);
+static esp_err_t ota_update_handler(httpd_req_t *req);
+static esp_err_t factory_reset_handler(httpd_req_t *req);
 
 /*-----------------------------
  * HTML helpers
@@ -204,7 +209,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "justify-content:center;background:#232d39;border:1px solid #2c3947;border-radius:8px;"
         "color:#e6edf3;font-size:14px\">"
         "📷 选择照片"
-        "<input type=\"file\" id=\"pf\" multiple accept=\"image/jpeg,image/png,image/webp\" "
+        "<input type=\"file\" id=\"pf\" accept=\"image/jpeg,image/png,image/webp\" "
         "style=\"display:none\"></label>"
         "<button type=\"button\" id=\"ub\" onclick=\"upl()\" "
         "style=\"flex:1;min-height:44px;background:#2dd4bf;color:#0b1116;border:none;"
@@ -221,9 +226,33 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     off += snprintf(html_buf + off, sizeof(html_buf) - off,
         "<p style=\"font-size:12px;color:#64748a;margin-top:8px\">"
         "浏览器自动压缩，无需公网。"
-        "JSON 格式: {&quot;photos&quot;: [&quot;http://host/img1.jpg&quot;, ...]}"
+        "JSON 格式：{&quot;photos&quot;: [&quot;http://host/img1.jpg&quot;, ...]}"
         "</p>\n");
     off += snprintf(html_buf + off, sizeof(html_buf) - off, "</div>\n");
+    
+    /* Section: System (OTA + Factory Reset). */
+    off += snprintf(html_buf + off, sizeof(html_buf) - off,
+        "<div class=\"section\"><h2>系统</h2>\n"
+        "<div class=\"field\"><label>固件更新</label>"
+        "<div style=\"display:flex;gap:8px;margin-top:6px\">"
+        "<label style=\"flex:1;cursor:pointer;min-height:44px;display:flex;align-items:center;"
+        "justify-content:center;background:#232d39;border:1px solid #2c3947;border-radius:8px;"
+        "color:#e6edf3;font-size:14px\">"
+        "📦 选择固件"
+        "<input type=\"file\" id=\"ota_file\" accept=\".bin\" "
+        "style=\"display:none\"></label>"
+        "<button type=\"button\" id=\"ota_btn\" onclick=\"ota()\" "
+        "style=\"flex:1;min-height:44px;background:#3b82f6;color:#fff;border:none;"
+        "border-radius:8px;font-size:14px;font-weight:600;cursor:pointer\">"
+        "更新</button></div>"
+        "<div id=\"ota_pr\" style=\"font-size:13px;color:#94a3b3;margin-top:8px\"></div></div>\n"
+        "<div class=\"field\" style=\"margin-top:16px;border-top:1px solid #2c3947;padding-top:16px\">"
+        "<label>恢复出厂设置</label>"
+        "<button type=\"button\" onclick=\"factoryReset()\" "
+        "style=\"width:100%%;min-height:44px;background:#dc2626;color:#fff;border:none;"
+        "border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-top:6px\">"
+        "清除所有配置并重启</button></div>\n"
+        "</div>\n");
 
     /* Crop modal + thumbnail preview grid (outside form). */
     off += snprintf(html_buf + off, sizeof(html_buf) - off,
@@ -266,36 +295,37 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "b.textContent=s?'隐藏':'显示';}"
         "function s(f){var b=document.getElementById('sb');"
         "b.disabled=true;b.textContent='保存中…';return true;}"
-        "var FQ=[],CQ=[],CI=0,PW=480;"
+        "var FQ=null,CQ=null,PW=480;"
         "var cr={im:null,s:1,ix:0,iy:0,iw:0,ih:0,pw:PW,dr:false,dx:0,dy:0};"
         "document.getElementById('pf').addEventListener('change',function(e){"
-        "FQ=Array.from(e.target.files);CQ=[];"
+        "if(e.target.files.length===0)return;"
+        "var f=e.target.files[0];"
+        "FQ={name:f.name,src:null,blob:null,ready:false};"
         "var g=document.getElementById('tp');g.innerHTML='';"
-        "FQ.forEach(function(f,i){var d=document.createElement('div');d.className='tpt';"
+        "var d=document.createElement('div');d.className='tpt';"
         "var im=document.createElement('img');im.src=URL.createObjectURL(f);"
         "d.appendChild(im);g.appendChild(d);"
-        "var r=new FileReader();r.onload=function(ev){FQ[i]={name:f.name,src:ev.target.result,ready:false}};"
-        "r.readAsDataURL(f)});});"
-        "function upl(){if(!FQ.length){alert('请先选择照片');return;}"
-        "CI=0;CQ=new Array(FQ.length);nx();}"
-        "function nx(){if(CI>=FQ.length){au();return;}"
-        "var f=FQ[CI];if(f.ready){cp(f.blob,function(b){CQ[CI]=b;CI++;nx();});return;}"
-        "co(f.src,function(){});}"
-        "function au(){var pr=document.getElementById('pr');"
-        "(async function(){for(var i=0;i<CQ.length;i++){"
-        "if(!CQ[i])continue;pr.textContent='上传 '+(i+1)+'/'+CQ.length;"
-        "var b=CQ[i];try{var r=await fetch('/upload_photo',{method:'POST',"
-        "headers:{'Content-Type':'image/jpeg'},body:b});"
+        "var r=new FileReader();r.onload=function(ev){FQ.src=ev.target.result};"
+        "r.readAsDataURL(f);});"
+        "function upl(){if(!FQ){alert('请先选择照片');return;}"
+        "if(FQ.ready){doUpload();}else{co(FQ.src,function(){});}}"
+        "function doUpload(){var pr=document.getElementById('pr');"
+        "(async function(){"
+        "pr.textContent='清除旧照片...';"
+        "try{await fetch('/clear_photos',{method:'POST'})}catch(e){}"
+        "if(!CQ)return;pr.textContent='上传中...';"
+        "try{var r=await fetch('/upload_photo',{method:'POST',"
+        "headers:{'Content-Type':'image/jpeg'},body:CQ});"
         "var j=await r.json();console.log('saved',j.index)}"
-        "catch(e){pr.textContent='上传失败: '+(i+1);return;}}}"
+        "catch(e){pr.textContent='上传失败';return;}}"
         "()).then(function(){"
-        "pr.textContent='全部上传完成！';"
-        "setTimeout(function(){location.reload()},1200)});}\n"
+        "pr.textContent='上传完成！';"
+        "setTimeout(function(){location.reload()},1200)});}"
         "function clr(){if(!confirm('确定清除？'))return;"
         "fetch('/clear_photos',{method:'POST'}).then(function(){"
         "document.getElementById('tp').innerHTML='';"
         "document.getElementById('pr').textContent='';"
-        "FQ=[];CQ=[];setTimeout(function(){location.reload()},500)});}\n"
+        "FQ=null;CQ=null;setTimeout(function(){location.reload()},500)});}"
         "function co(src,done){var m=document.getElementById('cm');m.classList.add('on');"
         "var im=new Image();im.onload=function(){cr.im=im;var p=cr.pw;"
         "var s=Math.min(p/im.width,p/im.height);"
@@ -313,15 +343,16 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "var s=Math.min(p/im.width,p/im.height);"
         "var w=im.width*s,h=im.height*s;"
         "x.drawImage(im,(p-w)/2,(p-h)/2,w,h);"
-        "c.toBlob(function(b){done(b)},  'image/jpeg',0.85);};im.src=URL.createObjectURL(blob);}"
+        "c.toBlob(function(b){done(b)},'image/jpeg',0.85);};im.src=URL.createObjectURL(blob);}"
         "function cc(){var c=document.createElement('canvas');c.width=PW;c.height=PW;"
         "var x=c.getContext('2d');x.drawImage(cr.im,cr.ix,cr.iy,cr.iw,cr.ih);"
-        "c.toBlob(function(b){FQ[CI]={name:'c.jpg',ready:true,blob:b};"
-        "var g=document.getElementById('tp');if(g.children[CI]){"
-        "var im=g.children[CI].querySelector('img');if(im)im.src=URL.createObjectURL(b)}"
-        "CQ[CI]=b;document.getElementById('cm').classList.remove('on');"
-        "CI++;nx()},  'image/jpeg',0.85);}\n"
-        "function cx(){document.getElementById('cm').classList.remove('on');CI++;nx();}"
+        "c.toBlob(function(b){FQ.ready=true;FQ.blob=b;CQ=b;"
+        "var g=document.getElementById('tp');if(g.children[0]{"
+        "var im2=g.children[0].querySelector('img');"
+        "im2.src=URL.createObjectURL(b)};"
+        "document.getElementById('cm').classList.remove('on');"
+        "if(cr._d)cr._d();},'image/jpeg',0.85);}"
+        "function cx(){document.getElementById('cm').classList.remove('on');}"
         "function cz(f){var os=cr.s,ns=os*f;if(ns<.1||ns>10)return;"
         "var cx2=cr.ix+cr.iw/2,cy2=cr.iy+cr.ih/2;cr.s=ns;"
         "cr.iw=cr.im.width*ns;cr.ih=cr.im.height*ns;"
@@ -346,7 +377,29 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "cr.dx=t.clientX;cr.dy=t.clientY;cl();cd();e.preventDefault();}"
         ",{passive:false});"
         "cv.addEventListener('touchend',function(){cr.dr=false;});"
-        "})();\n"
+        "})();"
+        "var otaFile=null;"
+        "document.getElementById('ota_file').addEventListener('change',function(e){"
+        "if(e.target.files.length>0)otaFile=e.target.files[0];});"
+        "function ota(){if(!otaFile){alert('请先选择固件文件');return;}"
+        "var pr=document.getElementById('ota_pr');"
+        "var btn=document.getElementById('ota_btn');btn.disabled=true;btn.textContent='更新中...';"
+        "var xhr=new XMLHttpRequest();"
+        "xhr.upload.onprogress=function(e){if(e.lengthComputable){"
+        "pr.textContent=Math.round(e.loaded*100/e.total)+'%%';}};"
+        "xhr.onload=function(){if(xhr.status===200){"
+        "pr.textContent='更新成功，设备将重启...';"
+        "setTimeout(function(){location.href='/'},3000);"
+        "}else{pr.textContent='更新失败：'+xhr.status;"
+        "btn.disabled=false;btn.textContent='更新';}};"
+        "xhr.onerror=function(){pr.textContent='上传失败';"
+        "btn.disabled=false;btn.textContent='更新';};"
+        "xhr.open('POST','/ota_update');"
+        "xhr.send(otaFile);}"
+        "function factoryReset(){if(!confirm('确定恢复出厂设置？\\n所有配置和照片将被清除！'))return;"
+        "fetch('/factory_reset',{method:'POST'}).then(function(r){return r.json();}).then(function(j){"
+        "if(j.ok){alert('已恢复出厂设置，设备正在重启...');location.reload();}"
+        "else{alert('恢复失败')}}).catch(function(){alert('恢复失败');})}"
         "</script>\n"
         "</div></body></html>");
 
@@ -530,6 +583,116 @@ static esp_err_t clear_photos_handler(httpd_req_t *req)
 }
 
 /*-----------------------------
+ * POST /ota_update handler
+ *
+ * Receives a firmware binary and writes it to the next OTA partition.
+ *----------------------------*/
+static esp_err_t ota_update_handler(httpd_req_t *req)
+{
+    int content_len = req->content_len;
+    if (content_len <= 0 || content_len > 2 * 1024 * 1024) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid firmware size");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "OTA update: %d bytes", content_len);
+
+    const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
+    if (update_partition == NULL) {
+        ESP_LOGE(TAG, "no OTA partition found");
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No OTA partition");
+        return ESP_FAIL;
+    }
+
+    esp_ota_handle_t ota_handle;
+    esp_err_t err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OTA begin failed");
+        return ESP_FAIL;
+    }
+
+    /* Read and write in chunks. */
+    uint8_t chunk[4096];
+    int received = 0;
+    while (received < content_len) {
+        int n = httpd_req_recv(req, (char *)chunk, sizeof(chunk));
+        if (n <= 0) {
+            esp_ota_abort(ota_handle);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Receive failed");
+            return ESP_FAIL;
+        }
+        err = esp_ota_write(ota_handle, chunk, n);
+        if (err != ESP_OK) {
+            esp_ota_abort(ota_handle);
+            ESP_LOGE(TAG, "esp_ota_write failed: %s", esp_err_to_name(err));
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OTA write failed");
+            return ESP_FAIL;
+        }
+        received += n;
+    }
+
+    err = esp_ota_end(ota_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_end failed: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OTA end failed");
+        return ESP_FAIL;
+    }
+
+    err = esp_ota_set_boot_partition(update_partition);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_set_boot_partition failed: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Set boot failed");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "OTA update successful, restarting in 3s");
+
+    const char *resp = "{\"ok\":true}";
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, resp, strlen(resp));
+
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    esp_restart();
+    return ESP_OK;
+}
+
+/*-----------------------------
+ * POST /factory_reset handler
+ *
+ * Erases NVS config namespace and SPIFFS photos, then restarts.
+ *----------------------------*/
+static esp_err_t factory_reset_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "factory reset requested");
+
+    /* Erase NVS namespace. */
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(CONFIG_STORE_NS, NVS_READWRITE, &h);
+    if (err == ESP_OK) {
+        err = nvs_erase_all(h);
+        if (err == ESP_OK) err = nvs_commit(h);
+        nvs_close(h);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "nvs erase failed: %s", esp_err_to_name(err));
+    }
+
+    /* Clear photos. */
+    photo_storage_clear();
+
+    ESP_LOGI(TAG, "factory reset complete, restarting in 2s");
+
+    const char *resp = "{\"ok\":true}";
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, resp, strlen(resp));
+
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    esp_restart();
+    return ESP_OK;
+}
+
+/*-----------------------------
  * Public API
  *----------------------------*/
 esp_err_t web_config_start(void)
@@ -541,7 +704,7 @@ esp_err_t web_config_start(void)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 6;
+    config.max_uri_handlers = 8;
     config.stack_size = 8192;
 
     ESP_LOGI(TAG, "starting HTTP config server on port %d", config.server_port);
@@ -583,6 +746,20 @@ esp_err_t web_config_start(void)
         .handler = clear_photos_handler,
     };
     httpd_register_uri_handler(s_server, &clear_uri);
+
+    const httpd_uri_t ota_uri = {
+        .uri = "/ota_update",
+        .method = HTTP_POST,
+        .handler = ota_update_handler,
+    };
+    httpd_register_uri_handler(s_server, &ota_uri);
+
+    const httpd_uri_t factory_uri = {
+        .uri = "/factory_reset",
+        .method = HTTP_POST,
+        .handler = factory_reset_handler,
+    };
+    httpd_register_uri_handler(s_server, &factory_uri);
 
     char ip_str[32];
     get_ip_str(ip_str, sizeof(ip_str));
