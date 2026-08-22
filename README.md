@@ -19,6 +19,7 @@ Web 配置页与 SNTP 校时。
 - **Web 配置页**：设备获得 IP 后内置 HTTP 服务（80 端口）提供单页表单，可配置 HA token / URL / 实体 ID 等，保存后自动重启
   - 照片上传：浏览器端 JPEG 压缩 + 1:1 裁切，上传至 SPIFFS 分区
   - 固件 OTA 更新：上传 `fw.bin` 写入 OTA 分区，自动重启切换
+  - 固件版本检测：打开配置页自动查询 GitHub Releases，有新版本时显示提示
   - 恢复出厂设置：清除 NVS 配置和 SPIFFS 照片
 - **串口配置**：`fw> cfg set/list` 命令行备选入口（详见 [firmware/README.md](firmware/README.md)）
 - **时钟**：SNTP（ntp.aliyun.com，CST-8 时区）校时，状态栏显示日期时间

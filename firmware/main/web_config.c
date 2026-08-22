@@ -23,6 +23,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_http_server.h"
+#include "esp_http_client.h"
+#include "esp_app_desc.h"
 
 #include "config_store.h"
 #include "photo_storage.h"
@@ -38,6 +40,7 @@ static esp_err_t upload_post_handler(httpd_req_t *req);
 static esp_err_t clear_photos_handler(httpd_req_t *req);
 static esp_err_t ota_update_handler(httpd_req_t *req);
 static esp_err_t factory_reset_handler(httpd_req_t *req);
+static esp_err_t check_update_handler(httpd_req_t *req);
 
 /*-----------------------------
  * HTML helpers
@@ -231,8 +234,16 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     off += snprintf(html_buf + off, sizeof(html_buf) - off, "</div>\n");
     
     /* Section: System (OTA + Factory Reset). */
+    const esp_app_desc_t *app_desc = esp_app_get_description();
     off += snprintf(html_buf + off, sizeof(html_buf) - off,
         "<div class=\"section\"><h2>系统</h2>\n"
+        "<div class=\"field\"><label>当前版本</label>"
+        "<div id=\"ver_info\" style=\"font-size:14px;color:#e6edf3;padding:8px 0\">%s</div>"
+        "<div id=\"update_notice\" style=\"display:none;margin-top:8px;padding:10px;"
+        "background:#1e3a5f;border:1px solid #3b82f6;border-radius:8px\">"
+        "<span style=\"color:#60a5fa\">🎉 有新版本可用：</span>"
+        "<a id=\"update_link\" href=\"\" target=\"_blank\" style=\"color:#93c5fd\"></a>"
+        "</div></div>\n"
         "<div class=\"field\"><label>固件更新</label>"
         "<div style=\"display:flex;gap:8px;margin-top:6px\">"
         "<label style=\"flex:1;cursor:pointer;min-height:44px;display:flex;align-items:center;"
@@ -252,7 +263,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "style=\"width:100%%;min-height:44px;background:#dc2626;color:#fff;border:none;"
         "border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-top:6px\">"
         "清除所有配置并重启</button></div>\n"
-        "</div>\n");
+        "</div>\n", app_desc->version);
 
     /* Crop modal + thumbnail preview grid (outside form). */
     off += snprintf(html_buf + off, sizeof(html_buf) - off,
@@ -400,6 +411,13 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "fetch('/factory_reset',{method:'POST'}).then(function(r){return r.json();}).then(function(j){"
         "if(j.ok){alert('已恢复出厂设置，设备正在重启...');location.reload();}"
         "else{alert('恢复失败')}}).catch(function(){alert('恢复失败');})}"
+        "(function(){fetch('/check_update').then(function(r){return r.json();}).then(function(d){"
+        "if(d.has_update){document.getElementById('ver_info').textContent='当前: "
+        "'+d.current_version+' → 最新: '+d.latest_version;"
+        "var n=document.getElementById('update_notice');n.style.display='block';"
+        "document.getElementById('update_link').href=d.release_url;"
+        "document.getElementById('update_link').textContent=d.latest_version;}}"
+        ").catch(function(){})})();"
         "</script>\n"
         "</div></body></html>");
 
@@ -693,6 +711,165 @@ static esp_err_t factory_reset_handler(httpd_req_t *req)
 }
 
 /*-----------------------------
+ * GET /check_update handler
+ *
+ * Queries GitHub API for latest release and compares with current version.
+ *----------------------------*/
+static esp_err_t check_update_handler(httpd_req_t *req)
+{
+    const esp_app_desc_t *app_desc = esp_app_get_description();
+    const char *current_version = app_desc->version;
+
+    char resp[512];
+    int len;
+
+    /* Query GitHub API for latest release. */
+    esp_http_client_config_t http_config = {
+        .url = "https://api.github.com/repos/monty8800/esp32/releases/latest",
+        .timeout_ms = 5000,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&http_config);
+    if (client == NULL) {
+        len = snprintf(resp, sizeof(resp),
+            "{\"has_update\":false,\"current_version\":\"%s\",\"error\":\"init failed\"}",
+            current_version);
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, resp, len);
+        return ESP_OK;
+    }
+
+    esp_http_client_set_header(client, "User-Agent", "ESP32-OTA-Check");
+
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+        esp_http_client_cleanup(client);
+        len = snprintf(resp, sizeof(resp),
+            "{\"has_update\":false,\"current_version\":\"%s\",\"error\":\"connect failed\"}",
+            current_version);
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, resp, len);
+        return ESP_OK;
+    }
+
+    int content_length = esp_http_client_fetch_headers(client);
+    if (content_length < 0 || content_length > 16384) {
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        len = snprintf(resp, sizeof(resp),
+            "{\"has_update\":false,\"current_version\":\"%s\",\"error\":\"invalid response\"}",
+            current_version);
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, resp, len);
+        return ESP_OK;
+    }
+
+    char *json_buf = malloc(content_length + 1);
+    if (json_buf == NULL) {
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        len = snprintf(resp, sizeof(resp),
+            "{\"has_update\":false,\"current_version\":\"%s\",\"error\":\"OOM\"}",
+            current_version);
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, resp, len);
+        return ESP_OK;
+    }
+
+    int total_read = 0;
+    while (total_read < content_length) {
+        int n = esp_http_client_read(client, json_buf + total_read, content_length - total_read);
+        if (n <= 0) break;
+        total_read += n;
+    }
+    json_buf[total_read] = '\0';
+
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+
+    /* Parse tag_name from JSON response. */
+    char *tag_start = strstr(json_buf, "\"tag_name\"");
+    if (tag_start == NULL) {
+        free(json_buf);
+        len = snprintf(resp, sizeof(resp),
+            "{\"has_update\":false,\"current_version\":\"%s\",\"error\":\"parse failed\"}",
+            current_version);
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, resp, len);
+        return ESP_OK;
+    }
+
+    /* Find the value after "tag_name": " */
+    char *value_start = strchr(tag_start + 10, '"');
+    if (value_start == NULL) {
+        free(json_buf);
+        len = snprintf(resp, sizeof(resp),
+            "{\"has_update\":false,\"current_version\":\"%s\",\"error\":\"parse failed\"}",
+            current_version);
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, resp, len);
+        return ESP_OK;
+    }
+    value_start++;
+    char *value_end = strchr(value_start, '"');
+    if (value_end == NULL) {
+        free(json_buf);
+        len = snprintf(resp, sizeof(resp),
+            "{\"has_update\":false,\"current_version\":\"%s\",\"error\":\"parse failed\"}",
+            current_version);
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, resp, len);
+        return ESP_OK;
+    }
+
+    char latest_version[64] = {0};
+    int tag_len = value_end - value_start;
+    if (tag_len >= (int)sizeof(latest_version)) tag_len = sizeof(latest_version) - 1;
+    strncpy(latest_version, value_start, tag_len);
+
+    /* Parse html_url for release link. */
+    char release_url[256] = "https://github.com/monty8800/esp32/releases";
+    char *url_start = strstr(json_buf, "\"html_url\"");
+    if (url_start != NULL) {
+        char *uv = strchr(url_start + 10, '"');
+        if (uv != NULL) {
+            uv++;
+            char *ue = strchr(uv, '"');
+            if (ue != NULL) {
+                int url_len = ue - uv;
+                if (url_len < (int)sizeof(release_url)) {
+                    strncpy(release_url, uv, url_len);
+                    release_url[url_len] = '\0';
+                }
+            }
+        }
+    }
+
+    free(json_buf);
+
+    /* Compare versions (strip 'v' prefix if present). */
+    const char *latest_cmp = latest_version;
+    if (latest_cmp[0] == 'v') latest_cmp++;
+    const char *current_cmp = current_version;
+    if (current_cmp[0] == 'v') current_cmp++;
+
+    bool has_update = (strcmp(latest_cmp, current_cmp) != 0) &&
+                      (strcmp(latest_cmp, "0.0.0") != 0);
+
+    len = snprintf(resp, sizeof(resp),
+        "{\"has_update\":%s,\"current_version\":\"%s\",\"latest_version\":\"%s\","
+        "\"release_url\":\"%s\"}",
+        has_update ? "true" : "false",
+        current_version, latest_version, release_url);
+
+    ESP_LOGI(TAG, "version check: current=%s, latest=%s, has_update=%d",
+             current_version, latest_version, has_update);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, resp, len);
+    return ESP_OK;
+}
+
+/*-----------------------------
  * Public API
  *----------------------------*/
 esp_err_t web_config_start(void)
@@ -704,7 +881,7 @@ esp_err_t web_config_start(void)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 8;
+    config.max_uri_handlers = 9;
     config.stack_size = 8192;
 
     ESP_LOGI(TAG, "starting HTTP config server on port %d", config.server_port);
@@ -760,6 +937,13 @@ esp_err_t web_config_start(void)
         .handler = factory_reset_handler,
     };
     httpd_register_uri_handler(s_server, &factory_uri);
+
+    const httpd_uri_t check_update_uri = {
+        .uri = "/check_update",
+        .method = HTTP_GET,
+        .handler = check_update_handler,
+    };
+    httpd_register_uri_handler(s_server, &check_update_uri);
 
     char ip_str[32];
     get_ip_str(ip_str, sizeof(ip_str));
