@@ -23,6 +23,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_http_server.h"
+#include "esp_http_client.h"
 #include "esp_app_desc.h"
 
 #include "config_store.h"
@@ -40,6 +41,11 @@ static esp_err_t clear_photos_handler(httpd_req_t *req);
 static esp_err_t ota_update_handler(httpd_req_t *req);
 static esp_err_t factory_reset_handler(httpd_req_t *req);
 static esp_err_t check_update_handler(httpd_req_t *req);
+static esp_err_t readme_cache_handler(httpd_req_t *req);
+
+/* README cache: fetched once from GitHub, served locally to avoid CORS. */
+static char *s_readme_cache = NULL;
+static size_t s_readme_cache_len = 0;
 
 /*-----------------------------
  * HTML helpers
@@ -415,7 +421,9 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "else{alert('恢复失败')}}).catch(function(){alert('恢复失败');})}"
         "(function(){fetch('/check_update').then(function(r){return r.json();}).then(function(d){"
         "document.getElementById('ver_info').textContent='当前: '+d.current_version;"
-        "return fetch(d.readme_url,{cache:'no-store'}).then(function(r){"
+        "if(!d.has_readme){document.getElementById('ver_info').textContent+=' (无法连接GitHub)';return;}"
+        "return fetch('/readme_cache',{cache:'no-store'});"
+        "}).then(function(r){if(!r)throw new Error('no readme');"
         "if(!r.ok)throw new Error('HTTP '+r.status);return r.text();"
         "}).then(function(text){"
         "var m=text.match(/LATEST:\\s*(\\S+)\\s+(\\S+)/);"
@@ -429,7 +437,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "document.getElementById('update_link').textContent=latest;"
         "updateOtaBtn();}}"
         "else{document.getElementById('ver_info').textContent+=' (未找到版本信息)';}}"
-        ").catch(function(e){document.getElementById('ver_info').textContent+=' (网络错误: '+e.message+')';})})();"
+        ").catch(function(e){document.getElementById('ver_info').textContent+=' (错误: '+e.message+')';})})();"
         "</script>\n"
         "</div></body></html>");
 
@@ -725,22 +733,72 @@ static esp_err_t factory_reset_handler(httpd_req_t *req)
 /*-----------------------------
  * GET /check_update handler
  *
- * Returns current firmware version. Browser JS fetches README from GitHub
- * to get latest version info (no device internet needed).
+ * Returns current firmware version. Triggers README fetch from GitHub
+ * (cached locally to avoid browser CORS issues).
  *----------------------------*/
 static esp_err_t check_update_handler(httpd_req_t *req)
 {
     const esp_app_desc_t *app_desc = esp_app_get_description();
     const char *current_version = app_desc->version;
 
+    /* Fetch README from GitHub if not cached. */
+    if (s_readme_cache == NULL) {
+        esp_http_client_config_t http_config = {
+            .url = "https://raw.githubusercontent.com/monty8800/esp32/master/README.md",
+            .timeout_ms = 5000,
+        };
+        esp_http_client_handle_t client = esp_http_client_init(&http_config);
+        if (client != NULL) {
+            esp_http_client_set_header(client, "User-Agent", "ESP32-OTA-Check");
+            if (esp_http_client_open(client, 0) == ESP_OK) {
+                int content_length = esp_http_client_fetch_headers(client);
+                if (content_length > 0 && content_length < 32768) {
+                    s_readme_cache = malloc(content_length + 1);
+                    if (s_readme_cache != NULL) {
+                        int total_read = 0;
+                        while (total_read < content_length) {
+                            int n = esp_http_client_read(client, s_readme_cache + total_read, content_length - total_read);
+                            if (n <= 0) break;
+                            total_read += n;
+                        }
+                        s_readme_cache[total_read] = '\0';
+                        s_readme_cache_len = total_read;
+                        ESP_LOGI(TAG, "README cached: %d bytes", total_read);
+                    }
+                }
+            }
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+        }
+        if (s_readme_cache == NULL) {
+            ESP_LOGW(TAG, "README fetch failed");
+        }
+    }
+
     char resp[256];
     int len = snprintf(resp, sizeof(resp),
-        "{\"current_version\":\"%s\","
-        "\"readme_url\":\"https://raw.githubusercontent.com/monty8800/esp32/master/README.md\"}",
-        current_version);
+        "{\"current_version\":\"%s\",\"has_readme\":%s}",
+        current_version, s_readme_cache ? "true" : "false");
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, len);
+    return ESP_OK;
+}
+
+/*-----------------------------
+ * GET /readme_cache handler
+ *
+ * Serves the cached README content to the browser (same-origin, no CORS).
+ *----------------------------*/
+static esp_err_t readme_cache_handler(httpd_req_t *req)
+{
+    if (s_readme_cache == NULL) {
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        httpd_resp_send(req, "README not cached", HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    httpd_resp_send(req, s_readme_cache, s_readme_cache_len);
     return ESP_OK;
 }
 
@@ -756,7 +814,7 @@ esp_err_t web_config_start(void)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 9;
+    config.max_uri_handlers = 10;
     config.stack_size = 8192;
 
     ESP_LOGI(TAG, "starting HTTP config server on port %d", config.server_port);
@@ -819,6 +877,13 @@ esp_err_t web_config_start(void)
         .handler = check_update_handler,
     };
     httpd_register_uri_handler(s_server, &check_update_uri);
+
+    const httpd_uri_t readme_cache_uri = {
+        .uri = "/readme_cache",
+        .method = HTTP_GET,
+        .handler = readme_cache_handler,
+    };
+    httpd_register_uri_handler(s_server, &readme_cache_uri);
 
     char ip_str[32];
     get_ip_str(ip_str, sizeof(ip_str));

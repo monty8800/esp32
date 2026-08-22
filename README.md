@@ -1,6 +1,6 @@
 # ESP32-S3 智能家居控制面板
 
-<!-- LATEST: v1.1.1 https://github.com/monty8800/esp32/releases/download/v1.1.1/fw.bin -->
+<!-- LATEST: v1.2.3 https://github.com/monty8800/esp32/releases/download/v1.2.3/fw.bin -->
 
 基于 **Waveshare ESP32-S3-Touch-LCD-4B**（480×480 触摸圆屏）的桌面智能面板固件。
 LVGL 图形界面，接入 Home Assistant 与自建服务器监控，支持 WiFi 配网、
