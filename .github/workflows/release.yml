@@ -16,6 +16,7 @@ jobs:
 
       - name: Build firmware
         run: |
+          . /opt/esp/idf/export.sh
           cd firmware
           idf.py set-target esp32s3
           idf.py build
