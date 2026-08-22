@@ -22,6 +22,8 @@ idf_component_register(
         "business/ui/dashboard_page.c"
         "business/ui/devices_page.c"
         "business/ui/server_page.c"
+        "business/ui/photos_page.c"
+        "photo_storage.c"
         "business/ui/wifi_setup_overlay.c"
         "business/net_worker.c"
         "business/ha_client.c"
@@ -42,6 +44,8 @@ idf_component_register(
         driver
         esp_driver_ledc
         esp_timer
+        esp_http_client
+        spiffs
     PRIV_REQUIRES
         esp_lvgl_port
         lvgl
@@ -51,7 +55,6 @@ idf_component_register(
         esp_lcd_panel_io_additions
         esp_io_expander_tca9554
         esp_io_expander
-        esp_http_client
         esp_http_server
         esp_wifi
         esp_netif
@@ -75,6 +78,8 @@ set(_shared_srcs
     "${CMAKE_CURRENT_SOURCE_DIR}/business/ui/dashboard_page.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/business/ui/devices_page.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/business/ui/server_page.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/business/ui/photos_page.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/photo_storage.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/business/ui/wifi_setup_overlay.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/business/net_worker.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/business/ha_client.c"

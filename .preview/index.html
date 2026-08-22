@@ -1,0 +1,68 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0f1418">
+<title>ESP32 配置</title><style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+background:#0f1418;color:#e6edf3;padding:16px 16px 40px;line-height:1.5;
+-webkit-text-size-adjust:100%}
+.container{max-width:480px;margin:0 auto}
+h1{font-size:22px;font-weight:700;color:#2dd4bf}
+.subtitle{font-size:14px;color:#94a3b3;margin:4px 0 20px}
+.section{background:#1a212a;border:1px solid #2c3947;border-radius:12px;
+padding:16px;margin-bottom:16px}
+h2{font-size:13px;font-weight:600;color:#2dd4bf;letter-spacing:.06em;margin-bottom:14px}
+.field{margin-bottom:14px}
+label{display:block;font-size:13px;font-weight:500;color:#94a3b3;margin-bottom:6px}
+input{width:100%;min-height:44px;padding:10px 12px;background:#0b1116;
+border:1px solid #2c3947;border-radius:8px;color:#e6edf3;font-size:16px;
+touch-action:manipulation}
+input::placeholder{color:#64748a}
+input:focus{outline:none;border-color:#2dd4bf;
+box-shadow:0 0 0 3px rgba(45,212,191,.28)}
+.pw{display:flex;gap:8px}
+.pw input{flex:1;min-width:0}
+.eye{flex:0 0 auto;min-height:44px;padding:0 12px;background:#232d39;
+color:#e6edf3;border:1px solid #2c3947;border-radius:8px;font-size:14px;cursor:pointer}
+.masked{display:block;font-size:13px;color:#94a3b3;padding:4px 0 6px}
+button[type=submit]{width:100%;min-height:48px;margin-top:4px;background:#2dd4bf;
+color:#0b1116;border:none;border-radius:10px;font-size:16px;font-weight:600;
+cursor:pointer;touch-action:manipulation;transition:background .15s ease,opacity .15s ease}
+button[type=submit]:hover{background:#25b8a5}
+button[type=submit]:active{background:#1fa392}
+button[type=submit]:disabled{opacity:.55;cursor:wait}
+:focus-visible{outline:2px solid #2dd4bf;outline-offset:2px}
+.info{font-size:13px;color:#94a3b3;margin-top:16px;text-align:center}
+</style></head><body><div class="container">
+<h1>ESP32 智能面板配置</h1>
+<p class="subtitle">设备 IP：192.168.9.150</p>
+<form method="POST" action="success.html" onsubmit="return s(this)">
+<div class="section"><h2>Home Assistant</h2>
+<div class="field"><label for="ha_token">Access Token (长期令牌)</label><span class="masked">已设置 (182 字符)</span><div class="pw"><input type="password" id="ha_token" name="ha_token" placeholder="留空保持不变" autocomplete="off"><button type="button" class="eye" aria-label="显示或隐藏" onclick="t(this)">显示</button></div></div>
+<div class="field"><label for="ha_base_url">Base URL</label><input type="url" id="ha_base_url" name="ha_base_url" value="http://192.168.9.201:8123" placeholder="留空清除"></div>
+</div>
+<div class="section"><h2>HA 实体 ID</h2>
+<div class="field"><label for="ha_entity_temp">温度传感器</label><input type="text" id="ha_entity_temp" name="ha_entity_temp" value="sensor.living_room_temperature" placeholder="留空清除"></div>
+<div class="field"><label for="ha_entity_hum">湿度传感器</label><input type="text" id="ha_entity_hum" name="ha_entity_hum" value="sensor.living_room_humidity" placeholder="留空清除"></div>
+<div class="field"><label for="ha_entity_pm25">PM2.5 传感器</label><input type="text" id="ha_entity_pm25" name="ha_entity_pm25" value="" placeholder="留空清除"></div>
+<div class="field"><label for="ha_entity_mode">净化器模式</label><input type="text" id="ha_entity_mode" name="ha_entity_mode" value="" placeholder="留空清除"></div>
+<div class="field"><label for="ha_entity_power">净化器开关</label><input type="text" id="ha_entity_power" name="ha_entity_power" value="" placeholder="留空清除"></div>
+<div class="field"><label for="ha_entity_ac">空调</label><input type="text" id="ha_entity_ac" name="ha_entity_ac" value="" placeholder="留空清除"></div>
+<div class="field"><label for="ha_entity_lamp">台灯</label><input type="text" id="ha_entity_lamp" name="ha_entity_lamp" value="" placeholder="留空清除"></div>
+<div class="field"><label for="ha_entity_cam1">摄像头 4K</label><input type="text" id="ha_entity_cam1" name="ha_entity_cam1" value="" placeholder="留空清除"></div>
+<div class="field"><label for="ha_entity_cam2">摄像头 2K</label><input type="text" id="ha_entity_cam2" name="ha_entity_cam2" value="" placeholder="留空清除"></div>
+</div>
+<div class="section"><h2>服务 URL</h2>
+<div class="field"><label for="server_summary_url">服务器监控 API</label><input type="url" id="server_summary_url" name="server_summary_url" value="http://192.168.9.201:9090/api/summary" placeholder="留空清除"></div>
+<div class="field"><label for="weather_url">天气 API</label><input type="url" id="weather_url" name="weather_url" value="" placeholder="留空清除"></div>
+</div>
+<button type="submit" id="sb">保存并重启</button></form>
+<p class="info">保存后设备将自动重启以应用新配置（预览模式：提交后跳转本机成功页）</p>
+<script>
+function t(b){var i=b.previousElementSibling;
+var s=i.type==='password';i.type=s?'text':'password';
+b.textContent=s?'隐藏':'显示';}
+function s(f){var b=document.getElementById('sb');
+b.disabled=true;b.textContent='保存中…';return true;}
+</script>
+</div></body></html>

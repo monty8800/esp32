@@ -48,6 +48,8 @@
 #include "ui/dashboard_page.h"
 #include "ui/devices_page.h"
 #include "ui/server_page.h"
+#include "ui/photos_page.h"
+#include "photo_storage.h"
 
 static const char *TAG = "fw";
 
@@ -98,7 +100,8 @@ static void ui_assemble(void)
     dashboard_page_create(ui_shell_get_tile(0), font_sm, font_lg);
     devices_page_create(ui_shell_get_tile(1), font_sm, font_lg);
     server_page_create(ui_shell_get_tile(2), font_sm);
-    ESP_LOGI(TAG, "[fw] ui assembled: shell + dashboard/devices/server");
+    photos_page_create(ui_shell_get_tile(3), font_sm);
+    ESP_LOGI(TAG, "[fw] ui assembled: shell + dashboard/devices/server/photos");
 }
 
 void app_main(void)
@@ -204,6 +207,25 @@ void app_main(void)
      * server/weather polling, so initialise it unconditionally (repeat
      * calls are safe). */
     curl_global_init(CURL_GLOBAL_DEFAULT);
+
+    /*--- Photo storage: mount SPIFFS so uploaded JPEGs are available. ---*/
+    if(photo_storage_init() == ESP_OK) {
+        int n = photo_storage_count();
+        if(n > 0) {
+            ESP_LOGI(TAG, "[fw] %d local photo(s) in SPIFFS", n);
+            photos_page_set_source_url("local://spiffs");
+        }
+    }
+
+    /*--- Photos: read the photo source URL from NVS (HTTP fallback) ---*/
+    {
+        char photo_url[512] = "";
+        config_get_str("photo_source_url", photo_url, sizeof(photo_url));
+        if(photo_url[0] != '\0') {
+            photos_page_set_source_url(photo_url);
+            ESP_LOGI(TAG, "[fw] photo source: %s", photo_url);
+        }
+    }
 
     bool ha_ok = ha_client_init();
     if(!ha_ok) {

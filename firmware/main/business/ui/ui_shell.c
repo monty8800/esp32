@@ -2,7 +2,7 @@
  * @file ui_shell.c
  *
  * Navigation shell implementation: status bar (clock + HA word + page dots)
- * + horizontal lv_tileview with three tiles. Page switching is handled by
+ * + horizontal lv_tileview with four tiles. Page switching is handled by
  * the tileview's built-in swipe; the dots mirror and drive the active page.
  */
 

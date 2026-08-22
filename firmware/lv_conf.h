@@ -889,9 +889,9 @@
 #endif
 
 /** API for memory-mapped file access. */
-#define LV_USE_FS_MEMFS 0
+#define LV_USE_FS_MEMFS 1   /* firmware: JPEG variable-source decoding */
 #if LV_USE_FS_MEMFS
-    #define LV_FS_MEMFS_LETTER '\0'     /**< Set an upper-case driver-identifier letter for this driver (e.g. 'A'). */
+    #define LV_FS_MEMFS_LETTER 'M'
 #endif
 
 /** API for LittleFs. */
@@ -932,7 +932,7 @@
 
 /** JPG + split JPG decoder library.
  *  Split JPG is a custom format optimized for embedded systems. */
-#define LV_USE_TJPGD 0
+#define LV_USE_TJPGD 1   /* firmware: JPEG photo frame support */
 
 /** libjpeg-turbo decoder library.
  *  - Supports complete JPEG specifications and high-performance JPEG decoding. */

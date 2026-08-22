@@ -1,9 +1,9 @@
 /**
  * @file ui_shell.h
  *
- * Three-page navigation shell: a persistent 44px status bar on top (clock +
+ * Four-page navigation shell: a persistent 44px status bar on top (clock +
  * HA connection state + page indicator dots) and an lv_tileview below it
- * holding the three pages. Swipe left/right to switch pages; tapping a dot
+ * holding the four pages. Swipe left/right to switch pages; tapping a dot
  * jumps to that page. Depends ONLY on the LVGL API.
  */
 
@@ -18,17 +18,17 @@ extern "C" {
 
 #include "lvgl.h"
 
-#define UI_SHELL_TILE_COUNT   3
+#define UI_SHELL_TILE_COUNT   4
 #define UI_SHELL_BAR_HEIGHT   44
 
 /**
  * Build the shell on the active screen. The screen background, the status
- * bar, the tileview and the three (empty, styled) tiles are created here;
+ * bar, the tileview and the four (empty, styled) tiles are created here;
  * the page modules then populate the tiles returned by ui_shell_get_tile().
  */
 void ui_shell_create(const lv_font_t * font_sm);
 
-/** Tile container for page @p idx (0 = dashboard, 1 = devices, 2 = server). */
+/** Tile container for page @p idx (0 = dashboard, 1 = devices, 2 = server, 3 = photos). */
 lv_obj_t * ui_shell_get_tile(int idx);
 
 /** Currently visible tile index (0..UI_SHELL_TILE_COUNT-1). */
