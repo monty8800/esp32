@@ -414,12 +414,13 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "if(j.ok){alert('已恢复出厂设置，设备正在重启...');location.reload();}"
         "else{alert('恢复失败')}}).catch(function(){alert('恢复失败');})}"
         "(function(){fetch('/check_update').then(function(r){return r.json();}).then(function(d){"
-        "if(d.has_update){document.getElementById('ver_info').textContent='当前: "
-        "'+d.current_version+' → 最新: '+d.latest_version;"
+        "document.getElementById('ver_info').textContent='当前: '+d.current_version;"
+        "if(d.has_update){document.getElementById('ver_info').textContent+=' → 最新: '+d.latest_version;"
         "var n=document.getElementById('update_notice');n.style.display='block';"
         "document.getElementById('update_link').href=d.release_url;"
-        "document.getElementById('update_link').textContent=d.latest_version;}}"
-        ").catch(function(){})})();"
+        "document.getElementById('update_link').textContent=d.latest_version;}"
+        "else if(d.error){document.getElementById('ver_info').textContent+=' ('+d.error+')';}}"
+        ").catch(function(){document.getElementById('ver_info').textContent+=' (检查失败)';})})();"
         "</script>\n"
         "</div></body></html>");
 
