@@ -23,7 +23,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_http_server.h"
-#include "esp_http_client.h"
 #include "esp_app_desc.h"
 
 #include "config_store.h"
@@ -415,12 +414,18 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "else{alert('恢复失败')}}).catch(function(){alert('恢复失败');})}"
         "(function(){fetch('/check_update').then(function(r){return r.json();}).then(function(d){"
         "document.getElementById('ver_info').textContent='当前: '+d.current_version;"
-        "if(d.has_update){document.getElementById('ver_info').textContent+=' → 最新: '+d.latest_version;"
+        "return fetch(d.readme_url,{cache:'no-store'});"
+        "}).then(function(r){return r.text();}).then(function(text){"
+        "var m=text.match(/LATEST:\\s*(\\S+)\\s+(\\S+)/);"
+        "if(m){var latest=m[1],url=m[2];"
+        "var cv=document.getElementById('ver_info').textContent.replace('当前: ','');"
+        "var lc=cv.replace(/^v/,''),ll=latest.replace(/^v/,'');"
+        "if(lc!==ll&&ll!=='0.0.0'){"
+        "document.getElementById('ver_info').textContent='当前: '+cv+' → 最新: '+latest;"
         "var n=document.getElementById('update_notice');n.style.display='block';"
-        "document.getElementById('update_link').href=d.release_url;"
-        "document.getElementById('update_link').textContent=d.latest_version;}"
-        "else if(d.error){document.getElementById('ver_info').textContent+=' ('+d.error+')';}}"
-        ").catch(function(){document.getElementById('ver_info').textContent+=' (检查失败)';})})();"
+        "document.getElementById('update_link').href=url;"
+        "document.getElementById('update_link').textContent=latest;}}"
+        "}).catch(function(){document.getElementById('ver_info').textContent+=' (检查失败)';})})();"
         "</script>\n"
         "</div></body></html>");
 
@@ -716,156 +721,19 @@ static esp_err_t factory_reset_handler(httpd_req_t *req)
 /*-----------------------------
  * GET /check_update handler
  *
- * Queries GitHub API for latest release and compares with current version.
+ * Returns current firmware version. Browser JS fetches README from GitHub
+ * to get latest version info (no device internet needed).
  *----------------------------*/
 static esp_err_t check_update_handler(httpd_req_t *req)
 {
     const esp_app_desc_t *app_desc = esp_app_get_description();
     const char *current_version = app_desc->version;
 
-    char resp[512];
-    int len;
-
-    /* Query GitHub API for latest release. */
-    esp_http_client_config_t http_config = {
-        .url = "https://api.github.com/repos/monty8800/esp32/releases/latest",
-        .timeout_ms = 5000,
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&http_config);
-    if (client == NULL) {
-        len = snprintf(resp, sizeof(resp),
-            "{\"has_update\":false,\"current_version\":\"%s\",\"error\":\"init failed\"}",
-            current_version);
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_send(req, resp, len);
-        return ESP_OK;
-    }
-
-    esp_http_client_set_header(client, "User-Agent", "ESP32-OTA-Check");
-
-    esp_err_t err = esp_http_client_open(client, 0);
-    if (err != ESP_OK) {
-        esp_http_client_cleanup(client);
-        len = snprintf(resp, sizeof(resp),
-            "{\"has_update\":false,\"current_version\":\"%s\",\"error\":\"connect failed\"}",
-            current_version);
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_send(req, resp, len);
-        return ESP_OK;
-    }
-
-    int content_length = esp_http_client_fetch_headers(client);
-    if (content_length < 0 || content_length > 16384) {
-        esp_http_client_close(client);
-        esp_http_client_cleanup(client);
-        len = snprintf(resp, sizeof(resp),
-            "{\"has_update\":false,\"current_version\":\"%s\",\"error\":\"invalid response\"}",
-            current_version);
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_send(req, resp, len);
-        return ESP_OK;
-    }
-
-    char *json_buf = malloc(content_length + 1);
-    if (json_buf == NULL) {
-        esp_http_client_close(client);
-        esp_http_client_cleanup(client);
-        len = snprintf(resp, sizeof(resp),
-            "{\"has_update\":false,\"current_version\":\"%s\",\"error\":\"OOM\"}",
-            current_version);
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_send(req, resp, len);
-        return ESP_OK;
-    }
-
-    int total_read = 0;
-    while (total_read < content_length) {
-        int n = esp_http_client_read(client, json_buf + total_read, content_length - total_read);
-        if (n <= 0) break;
-        total_read += n;
-    }
-    json_buf[total_read] = '\0';
-
-    esp_http_client_close(client);
-    esp_http_client_cleanup(client);
-
-    /* Parse tag_name from JSON response. */
-    char *tag_start = strstr(json_buf, "\"tag_name\"");
-    if (tag_start == NULL) {
-        free(json_buf);
-        len = snprintf(resp, sizeof(resp),
-            "{\"has_update\":false,\"current_version\":\"%s\",\"error\":\"parse failed\"}",
-            current_version);
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_send(req, resp, len);
-        return ESP_OK;
-    }
-
-    /* Find the value after "tag_name": " */
-    char *value_start = strchr(tag_start + 10, '"');
-    if (value_start == NULL) {
-        free(json_buf);
-        len = snprintf(resp, sizeof(resp),
-            "{\"has_update\":false,\"current_version\":\"%s\",\"error\":\"parse failed\"}",
-            current_version);
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_send(req, resp, len);
-        return ESP_OK;
-    }
-    value_start++;
-    char *value_end = strchr(value_start, '"');
-    if (value_end == NULL) {
-        free(json_buf);
-        len = snprintf(resp, sizeof(resp),
-            "{\"has_update\":false,\"current_version\":\"%s\",\"error\":\"parse failed\"}",
-            current_version);
-        httpd_resp_set_type(req, "application/json");
-        httpd_resp_send(req, resp, len);
-        return ESP_OK;
-    }
-
-    char latest_version[64] = {0};
-    int tag_len = value_end - value_start;
-    if (tag_len >= (int)sizeof(latest_version)) tag_len = sizeof(latest_version) - 1;
-    strncpy(latest_version, value_start, tag_len);
-
-    /* Parse html_url for release link. */
-    char release_url[256] = "https://github.com/monty8800/esp32/releases";
-    char *url_start = strstr(json_buf, "\"html_url\"");
-    if (url_start != NULL) {
-        char *uv = strchr(url_start + 10, '"');
-        if (uv != NULL) {
-            uv++;
-            char *ue = strchr(uv, '"');
-            if (ue != NULL) {
-                int url_len = ue - uv;
-                if (url_len < (int)sizeof(release_url)) {
-                    strncpy(release_url, uv, url_len);
-                    release_url[url_len] = '\0';
-                }
-            }
-        }
-    }
-
-    free(json_buf);
-
-    /* Compare versions (strip 'v' prefix if present). */
-    const char *latest_cmp = latest_version;
-    if (latest_cmp[0] == 'v') latest_cmp++;
-    const char *current_cmp = current_version;
-    if (current_cmp[0] == 'v') current_cmp++;
-
-    bool has_update = (strcmp(latest_cmp, current_cmp) != 0) &&
-                      (strcmp(latest_cmp, "0.0.0") != 0);
-
-    len = snprintf(resp, sizeof(resp),
-        "{\"has_update\":%s,\"current_version\":\"%s\",\"latest_version\":\"%s\","
-        "\"release_url\":\"%s\"}",
-        has_update ? "true" : "false",
-        current_version, latest_version, release_url);
-
-    ESP_LOGI(TAG, "version check: current=%s, latest=%s, has_update=%d",
-             current_version, latest_version, has_update);
+    char resp[256];
+    int len = snprintf(resp, sizeof(resp),
+        "{\"current_version\":\"%s\","
+        "\"readme_url\":\"https://raw.githubusercontent.com/monty8800/esp32/master/README.md\"}",
+        current_version);
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, len);
