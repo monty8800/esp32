@@ -23,13 +23,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_http_server.h"
-#include "esp_http_client.h"
 #include "esp_app_desc.h"
 
 #include "config_store.h"
 #include "photo_storage.h"
-#include "esp_ota_ops.h"
-#include "esp_partition.h"
 #include "nvs.h"
 
 static const char *TAG = "webcfg";
@@ -38,14 +35,6 @@ static httpd_handle_t s_server = NULL;
 
 static esp_err_t upload_post_handler(httpd_req_t *req);
 static esp_err_t clear_photos_handler(httpd_req_t *req);
-static esp_err_t ota_update_handler(httpd_req_t *req);
-static esp_err_t factory_reset_handler(httpd_req_t *req);
-static esp_err_t check_update_handler(httpd_req_t *req);
-static esp_err_t readme_cache_handler(httpd_req_t *req);
-
-/* README cache: fetched once from GitHub, served locally to avoid CORS. */
-static char *s_readme_cache = NULL;
-static size_t s_readme_cache_len = 0;
 
 /*-----------------------------
  * HTML helpers
@@ -238,37 +227,12 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "</p>\n");
     off += snprintf(html_buf + off, sizeof(html_buf) - off, "</div>\n");
     
-    /* Section: System (OTA + Factory Reset). */
+    /* Section: System. */
     const esp_app_desc_t *app_desc = esp_app_get_description();
     off += snprintf(html_buf + off, sizeof(html_buf) - off,
         "<div class=\"section\"><h2>系统</h2>\n"
         "<div class=\"field\"><label>当前版本</label>"
-        "<div id=\"ver_info\" style=\"font-size:14px;color:#e6edf3;padding:8px 0\">%s</div>"
-        "<div id=\"update_notice\" style=\"display:none;margin-top:8px;padding:10px;"
-        "background:#1e3a5f;border:1px solid #3b82f6;border-radius:8px\">"
-        "<span style=\"color:#60a5fa\">🎉 有新版本可用：</span>"
-        "<a id=\"update_link\" href=\"\" target=\"_blank\" style=\"color:#93c5fd\"></a>"
-        "</div></div>\n"
-        "<div class=\"field\"><label>固件更新</label>"
-        "<div style=\"display:flex;gap:8px;margin-top:6px\">"
-        "<div id=\"ota_pick\" onclick=\"var f=document.getElementById('ota_file');f.value='';f.click()\" "
-        "style=\"flex:1;cursor:pointer;min-height:44px;display:flex;align-items:center;"
-        "justify-content:center;background:#232d39;border:1px solid #2c3947;border-radius:8px;"
-        "color:#e6edf3;font-size:14px\">"
-        "📦 选择固件</div>"
-        "<input type=\"file\" id=\"ota_file\" accept=\".bin\" "
-        "style=\"display:none\">"
-        "<button type=\"button\" id=\"ota_btn\" onclick=\"ota()\" disabled "
-        "style=\"flex:1;min-height:44px;background:#3b82f6;color:#fff;border:none;"
-        "border-radius:8px;font-size:14px;font-weight:600;cursor:not-allowed;opacity:.5\">"
-        "更新</button></div>"
-        "<div id=\"ota_pr\" style=\"font-size:13px;color:#94a3b3;margin-top:8px\"></div></div>\n"
-        "<div class=\"field\" style=\"margin-top:16px;border-top:1px solid #2c3947;padding-top:16px\">"
-        "<label>恢复出厂设置</label>"
-        "<button type=\"button\" onclick=\"factoryReset()\" "
-        "style=\"width:100%%;min-height:44px;background:#dc2626;color:#fff;border:none;"
-        "border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-top:6px\">"
-        "清除所有配置并重启</button></div>\n"
+        "<div style=\"font-size:14px;color:#e6edf3;padding:8px 0\">%s</div></div>\n"
         "</div>\n", app_desc->version);
 
     /* Crop modal + thumbnail preview grid (outside form). */
@@ -395,53 +359,6 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         ",{passive:false});"
         "cv.addEventListener('touchend',function(){cr.dr=false;});"
         "})();"
-        "var otaFile=null,hasNewVersion=false;"
-        "function updateOtaBtn(){var btn=document.getElementById('ota_btn');"
-        "if(otaFile&&hasNewVersion){btn.disabled=false;btn.style.cursor='pointer';btn.style.opacity='1';}"
-        "else{btn.disabled=true;btn.style.cursor='not-allowed';btn.style.opacity='.5';}}"
-        "function onFileSelected(file){otaFile=file;"
-        "document.getElementById('ota_pick').textContent='\u2705 '+file.name;updateOtaBtn();}"
-        "document.getElementById('ota_file').addEventListener('change',function(e){"
-        "if(e.target.files.length>0)onFileSelected(e.target.files[0]);});"
-        "document.getElementById('ota_pick').addEventListener('click',function(){"
-        "setTimeout(function(){var f=document.getElementById('ota_file');"
-        "if(f.files&&f.files.length>0&&!otaFile)onFileSelected(f.files[0]);},500);});"
-        "function ota(){if(!otaFile){alert('请先选择固件文件');return;}"
-        "var pr=document.getElementById('ota_pr');"
-        "var btn=document.getElementById('ota_btn');btn.disabled=true;btn.textContent='更新中...';"
-        "var xhr=new XMLHttpRequest();"
-        "xhr.upload.onprogress=function(e){if(e.lengthComputable){"
-        "pr.textContent=Math.round(e.loaded*100/e.total)+'%%';}};"
-        "xhr.onload=function(){if(xhr.status===200){"
-        "pr.textContent='更新成功，设备将重启...';"
-        "setTimeout(function(){location.href='/'},3000);}"
-        "else{pr.textContent='更新失败：'+xhr.status;updateOtaBtn();}};"
-        "xhr.onerror=function(){pr.textContent='上传失败';updateOtaBtn();};"
-        "xhr.open('POST','/ota_update');"
-        "xhr.send(otaFile);}"
-        "function factoryReset(){if(!confirm('确定恢复出厂设置？\\n所有配置和照片将被清除！'))return;"
-        "fetch('/factory_reset',{method:'POST'}).then(function(r){return r.json();}).then(function(j){"
-        "if(j.ok){alert('已恢复出厂设置，设备正在重启...');location.reload();}"
-        "else{alert('恢复失败')}}).catch(function(){alert('恢复失败');})}"
-        "(function(){fetch('/check_update').then(function(r){return r.json();}).then(function(d){"
-        "document.getElementById('ver_info').textContent='当前: '+d.current_version;"
-        "if(!d.has_readme){document.getElementById('ver_info').textContent+=' (无法连接GitHub)';return;}"
-        "return fetch('/readme_cache',{cache:'no-store'});"
-        "}).then(function(r){if(!r)throw new Error('no readme');"
-        "if(!r.ok)throw new Error('HTTP '+r.status);return r.text();"
-        "}).then(function(text){"
-        "var m=text.match(/LATEST:\\s*(\\S+)\\s+(\\S+)/);"
-        "if(m){var latest=m[1],url=m[2];"
-        "var cv=document.getElementById('ver_info').textContent.replace('当前: ','');"
-        "var lc=cv.replace(/^v/,''),ll=latest.replace(/^v/,'');"
-        "if(lc!==ll&&ll!=='0.0.0'){hasNewVersion=true;"
-        "document.getElementById('ver_info').textContent='当前: '+cv+' → 最新: '+latest;"
-        "var n=document.getElementById('update_notice');n.style.display='block';"
-        "document.getElementById('update_link').href=url;"
-        "document.getElementById('update_link').textContent=latest;"
-        "updateOtaBtn();}}"
-        "else{document.getElementById('ver_info').textContent+=' (未找到版本信息)';}}"
-        ").catch(function(e){document.getElementById('ver_info').textContent+=' (错误: '+e.message+')';})})();"
         "</script>\n"
         "</div></body></html>");
 
@@ -625,188 +542,6 @@ static esp_err_t clear_photos_handler(httpd_req_t *req)
 }
 
 /*-----------------------------
- * POST /ota_update handler
- *
- * Receives a firmware binary and writes it to the next OTA partition.
- *----------------------------*/
-static esp_err_t ota_update_handler(httpd_req_t *req)
-{
-    int content_len = req->content_len;
-    if (content_len <= 0 || content_len > 2 * 1024 * 1024) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid firmware size");
-        return ESP_FAIL;
-    }
-
-    ESP_LOGI(TAG, "OTA update: %d bytes", content_len);
-
-    const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
-    if (update_partition == NULL) {
-        ESP_LOGE(TAG, "no OTA partition found");
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No OTA partition");
-        return ESP_FAIL;
-    }
-
-    esp_ota_handle_t ota_handle;
-    esp_err_t err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(err));
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OTA begin failed");
-        return ESP_FAIL;
-    }
-
-    /* Read and write in chunks. */
-    uint8_t chunk[4096];
-    int received = 0;
-    while (received < content_len) {
-        int n = httpd_req_recv(req, (char *)chunk, sizeof(chunk));
-        if (n <= 0) {
-            esp_ota_abort(ota_handle);
-            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Receive failed");
-            return ESP_FAIL;
-        }
-        err = esp_ota_write(ota_handle, chunk, n);
-        if (err != ESP_OK) {
-            esp_ota_abort(ota_handle);
-            ESP_LOGE(TAG, "esp_ota_write failed: %s", esp_err_to_name(err));
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OTA write failed");
-            return ESP_FAIL;
-        }
-        received += n;
-    }
-
-    err = esp_ota_end(ota_handle);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_ota_end failed: %s", esp_err_to_name(err));
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OTA end failed");
-        return ESP_FAIL;
-    }
-
-    err = esp_ota_set_boot_partition(update_partition);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_ota_set_boot_partition failed: %s", esp_err_to_name(err));
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Set boot failed");
-        return ESP_FAIL;
-    }
-
-    ESP_LOGI(TAG, "OTA update successful, restarting in 3s");
-
-    const char *resp = "{\"ok\":true}";
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, resp, strlen(resp));
-
-    vTaskDelay(pdMS_TO_TICKS(3000));
-    esp_restart();
-    return ESP_OK;
-}
-
-/*-----------------------------
- * POST /factory_reset handler
- *
- * Erases NVS config namespace and SPIFFS photos, then restarts.
- *----------------------------*/
-static esp_err_t factory_reset_handler(httpd_req_t *req)
-{
-    ESP_LOGI(TAG, "factory reset requested");
-
-    /* Erase NVS namespace. */
-    nvs_handle_t h;
-    esp_err_t err = nvs_open(CONFIG_STORE_NS, NVS_READWRITE, &h);
-    if (err == ESP_OK) {
-        err = nvs_erase_all(h);
-        if (err == ESP_OK) err = nvs_commit(h);
-        nvs_close(h);
-    }
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "nvs erase failed: %s", esp_err_to_name(err));
-    }
-
-    /* Clear photos. */
-    photo_storage_clear();
-
-    ESP_LOGI(TAG, "factory reset complete, restarting in 2s");
-
-    const char *resp = "{\"ok\":true}";
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, resp, strlen(resp));
-
-    vTaskDelay(pdMS_TO_TICKS(2000));
-    esp_restart();
-    return ESP_OK;
-}
-
-/*-----------------------------
- * GET /check_update handler
- *
- * Returns current firmware version. Triggers README fetch from GitHub
- * (cached locally to avoid browser CORS issues).
- *----------------------------*/
-static esp_err_t check_update_handler(httpd_req_t *req)
-{
-    const esp_app_desc_t *app_desc = esp_app_get_description();
-    const char *current_version = app_desc->version;
-
-    /* Fetch README from GitHub if not cached. */
-    if (s_readme_cache == NULL) {
-        esp_http_client_config_t http_config = {
-            .url = "https://raw.githubusercontent.com/monty8800/esp32/master/README.md",
-            .timeout_ms = 5000,
-        };
-        esp_http_client_handle_t client = esp_http_client_init(&http_config);
-        if (client != NULL) {
-            esp_http_client_set_header(client, "User-Agent", "ESP32-OTA-Check");
-            if (esp_http_client_open(client, 0) == ESP_OK) {
-                int content_length = esp_http_client_fetch_headers(client);
-                if (content_length > 0 && content_length < 32768) {
-                    s_readme_cache = malloc(content_length + 1);
-                    if (s_readme_cache != NULL) {
-                        int total_read = 0;
-                        while (total_read < content_length) {
-                            int n = esp_http_client_read(client, s_readme_cache + total_read, content_length - total_read);
-                            if (n <= 0) break;
-                            total_read += n;
-                        }
-                        s_readme_cache[total_read] = '\0';
-                        s_readme_cache_len = total_read;
-                        ESP_LOGI(TAG, "README cached: %d bytes", total_read);
-                    }
-                }
-            }
-            esp_http_client_close(client);
-            esp_http_client_cleanup(client);
-        }
-        if (s_readme_cache == NULL) {
-            ESP_LOGW(TAG, "README fetch failed");
-        }
-    }
-
-    char resp[256];
-    int len = snprintf(resp, sizeof(resp),
-        "{\"current_version\":\"%s\",\"has_readme\":%s}",
-        current_version, s_readme_cache ? "true" : "false");
-
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, resp, len);
-    return ESP_OK;
-}
-
-/*-----------------------------
- * GET /readme_cache handler
- *
- * Serves the cached README content to the browser (same-origin, no CORS).
- *----------------------------*/
-static esp_err_t readme_cache_handler(httpd_req_t *req)
-{
-    if (s_readme_cache == NULL) {
-        httpd_resp_set_status(req, "503 Service Unavailable");
-        httpd_resp_send(req, "README not cached", HTTPD_RESP_USE_STRLEN);
-        return ESP_FAIL;
-    }
-    httpd_resp_set_type(req, "text/plain; charset=utf-8");
-    httpd_resp_send(req, s_readme_cache, s_readme_cache_len);
-    return ESP_OK;
-}
-
-/*-----------------------------
  * Public API
  *----------------------------*/
 esp_err_t web_config_start(void)
@@ -818,7 +553,7 @@ esp_err_t web_config_start(void)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 10;
+    config.max_uri_handlers = 6;
     config.stack_size = 8192;
 
     ESP_LOGI(TAG, "starting HTTP config server on port %d", config.server_port);
@@ -860,34 +595,6 @@ esp_err_t web_config_start(void)
         .handler = clear_photos_handler,
     };
     httpd_register_uri_handler(s_server, &clear_uri);
-
-    const httpd_uri_t ota_uri = {
-        .uri = "/ota_update",
-        .method = HTTP_POST,
-        .handler = ota_update_handler,
-    };
-    httpd_register_uri_handler(s_server, &ota_uri);
-
-    const httpd_uri_t factory_uri = {
-        .uri = "/factory_reset",
-        .method = HTTP_POST,
-        .handler = factory_reset_handler,
-    };
-    httpd_register_uri_handler(s_server, &factory_uri);
-
-    const httpd_uri_t check_update_uri = {
-        .uri = "/check_update",
-        .method = HTTP_GET,
-        .handler = check_update_handler,
-    };
-    httpd_register_uri_handler(s_server, &check_update_uri);
-
-    const httpd_uri_t readme_cache_uri = {
-        .uri = "/readme_cache",
-        .method = HTTP_GET,
-        .handler = readme_cache_handler,
-    };
-    httpd_register_uri_handler(s_server, &readme_cache_uri);
 
     char ip_str[32];
     get_ip_str(ip_str, sizeof(ip_str));

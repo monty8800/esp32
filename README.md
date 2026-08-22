@@ -1,7 +1,5 @@
 # ESP32-S3 智能家居控制面板
 
-<!-- LATEST: v1.2.5 https://github.com/monty8800/esp32/releases/download/v1.2.5/fw.bin -->
-
 基于 **Waveshare ESP32-S3-Touch-LCD-4B**（480×480 触摸圆屏）的桌面智能面板固件。
 LVGL 图形界面，接入 Home Assistant 与自建服务器监控，支持 WiFi 配网、
 Web 配置页与 SNTP 校时。
@@ -20,14 +18,10 @@ Web 配置页与 SNTP 校时。
 - **WiFi 配网**：状态栏齿轮按钮 → 全屏配网浮层（扫描周边网络、LVGL 键盘输入密码、写入 NVS 后自动重启）
 - **Web 配置页**：设备获得 IP 后内置 HTTP 服务（80 端口）提供单页表单，可配置 HA token / URL / 实体 ID 等，保存后自动重启
   - 照片上传：浏览器端 JPEG 压缩 + 1:1 裁切，上传至 SPIFFS 分区
-  - 固件 OTA 更新：上传 `fw.bin` 写入 OTA 分区，自动重启切换（选择文件后显示文件名反馈）
-  - 固件版本检测：打开配置页自动查询 GitHub Releases，有新版本时显示提示
-  - 恢复出厂设置：清除 NVS 配置和 SPIFFS 照片
 - **串口配置**：`fw> cfg set/list` 命令行备选入口（详见 [firmware/README.md](firmware/README.md)）
 - **时钟**：SNTP（ntp.aliyun.com，CST-8 时区）校时，状态栏显示日期时间
 - **中文支持**：内置 CJK 位图字体（16px 含 GB2312 全量 6763 汉字），缺字回退 Montserrat
 - **健壮性**：WiFi 断线自动重连；HA 断线 3→30s 退避；三路轮询独立节奏（HA 3s / 服务器 15s、失败退避 60s / 天气 30min、失败 5min）
-- **OTA 双分区**：`ota_0` / `ota_1` 各 7.1MB，支持 Web 端无串口固件升级
 
 ## 硬件
 
