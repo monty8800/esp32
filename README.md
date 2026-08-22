@@ -61,7 +61,7 @@ idf.py -p /dev/cu.usbmodem* flash monitor
   自动下载（`main/idf_component.yml`），需要网络
 - 分区表：`ota_0` / `ota_1` 各 7.1MB + 2MB storage；app 当前约 3MB
 - 首次启动无 WiFi 凭据时，点状态栏齿轮完成配网，其余配置经 Web 配置页写入
-- Release 构建：push tag（如 `v1.0.0`）触发 GitHub Actions 自动构建，产物在 [Releases](https://github.com/monty8800/esp32/releases) 下载
+- Release 固件：本地 `idf.py build` 后通过 `gh release create` 上传至 [Releases](https://github.com/monty8800/esp32/releases) 下载
 
 ## CJK 字体管线（firmware/main/fonts/）
 
