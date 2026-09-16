@@ -931,8 +931,9 @@
 #define LV_USE_BMP 0
 
 /** JPG + split JPG decoder library.
- *  Split JPG is a custom format optimized for embedded systems. */
-#define LV_USE_TJPGD 1   /* firmware: JPEG photo frame support */
+ *  Split JPG is a custom format optimized for embedded systems.
+ *  2026-09-16：相册移除后固件再无任何 JPEG 解码需求，连同相册一并关闭。 */
+#define LV_USE_TJPGD 0
 
 /** libjpeg-turbo decoder library.
  *  - Supports complete JPEG specifications and high-performance JPEG decoding. */

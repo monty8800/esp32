@@ -32,8 +32,6 @@ static const char *TAG = "webcfg";
 
 static httpd_handle_t s_server = NULL;
 
-static esp_err_t photo_gone_handler(httpd_req_t *req);
-
 /*-----------------------------
  * HTML helpers
  *----------------------------*/
@@ -307,23 +305,6 @@ static esp_err_t save_post_handler(httpd_req_t *req)
 }
 
 /*-----------------------------
- * 照片相关端点：已停用
- *
- * 电子相册功能 2026-09-16 按用户指令移除 —— 显示端每帧重绘约 1.3 秒
- * （根因：LVGL 对 RAW JPEG 变量源每帧整幅重解码），修复代价过高。
- * 这里保留两个 URI 只为让旧版配置页的残留 JS 拿到明确的 410 而非 404，
- * 避免控制台报错混淆；功能本身已不存在。
- *----------------------------*/
-static esp_err_t photo_gone_handler(httpd_req_t *req)
-{
-    httpd_resp_set_status(req, "410 Gone");
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, "{\"ok\":false,\"error\":\"photo feature removed\"}",
-                    HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
-}
-
-/*-----------------------------
  * Public API
  *----------------------------*/
 esp_err_t web_config_start(void)
@@ -335,7 +316,8 @@ esp_err_t web_config_start(void)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 6;
+    /* 只注册 / 与 /save 两个端点（相册端点已随功能移除） */
+    config.max_uri_handlers = 2;
     config.stack_size = 8192;
 
     ESP_LOGI(TAG, "starting HTTP config server on port %d", config.server_port);
@@ -363,20 +345,6 @@ esp_err_t web_config_start(void)
         .user_ctx = NULL,
     };
     httpd_register_uri_handler(s_server, &save_uri);
-
-    const httpd_uri_t upload_uri = {
-        .uri = "/upload_photo",
-        .method = HTTP_POST,
-        .handler = photo_gone_handler,
-    };
-    httpd_register_uri_handler(s_server, &upload_uri);
-
-    const httpd_uri_t clear_uri = {
-        .uri = "/clear_photos",
-        .method = HTTP_POST,
-        .handler = photo_gone_handler,
-    };
-    httpd_register_uri_handler(s_server, &clear_uri);
 
     char ip_str[32];
     get_ip_str(ip_str, sizeof(ip_str));
