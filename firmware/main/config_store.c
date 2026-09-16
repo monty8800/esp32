@@ -34,6 +34,8 @@ static const char *CONFIG_KEYS[] = {
     "ha_base_url",
     "server_summary_url",
     "weather_url",
+    /* panel-hub (LXC 117) — the desk panel's single backend */
+    "panel_url",
     /* HA entity-ID overrides (env_shim maps them to HA_ENTITY_* envs) */
     "ha_entity_temp",
     "ha_entity_hum",
@@ -44,7 +46,6 @@ static const char *CONFIG_KEYS[] = {
     "ha_entity_lamp",
     "ha_entity_cam1",
     "ha_entity_cam2",
-    "photo_source_url",
 };
 #define CONFIG_KEY_COUNT (sizeof(CONFIG_KEYS) / sizeof(CONFIG_KEYS[0]))
 
@@ -242,5 +243,5 @@ void config_console_start(void)
     ESP_LOGI(TAG, "console ready: type 'cfg list' (keys: wifi_ssid, wifi_psk, "
                   "ha_token, ha_base_url, server_summary_url, weather_url, "
                   "ha_entity_temp/hum/pm25/mode/power/ac/lamp/cam1/cam2, "
-                  "photo_source_url)");
+                  ")");
 }

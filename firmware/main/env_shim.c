@@ -27,6 +27,8 @@ void env_shim_apply(void)
         { "ha_base_url",        "HA_BASE_URL"        },
         { "server_summary_url", "SERVER_SUMMARY_URL" },
         { "weather_url",        "WEATHER_URL"        },
+        /* panel-hub (LXC 117) — consumed by panel_client.c */
+        { "panel_url",          "PANEL_URL"          },
         /* HA entity-ID overrides consumed by ha_client.c */
         { "ha_entity_temp",     "HA_ENTITY_TEMP"     },
         { "ha_entity_hum",      "HA_ENTITY_HUM"      },

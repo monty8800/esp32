@@ -18,6 +18,7 @@ extern "C" {
 
 #include "lvgl.h"
 
+/* 2026-09-16：电子相册已移除；事务总览置首（tile 0），其余顺移。 */
 #define UI_SHELL_TILE_COUNT   4
 #define UI_SHELL_BAR_HEIGHT   44
 
@@ -28,7 +29,7 @@ extern "C" {
  */
 void ui_shell_create(const lv_font_t * font_sm);
 
-/** Tile container for page @p idx (0 = dashboard, 1 = devices, 2 = server, 3 = photos). */
+/** Tile container for page @p idx (0 = overview, 1 = dashboard, 2 = devices, 3 = server). */
 lv_obj_t * ui_shell_get_tile(int idx);
 
 /** Currently visible tile index (0..UI_SHELL_TILE_COUNT-1). */

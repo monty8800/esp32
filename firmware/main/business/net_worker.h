@@ -139,6 +139,115 @@ typedef struct {
 } weather_snapshot_t;
 
 /* --------------------------------------------------------------------------
+ * Panel hub snapshot (http://192.168.9.216:8790/api/panel)
+ *
+ * The hub aggregates three INDEPENDENT sources; each block carries its own
+ * `ok`. The UI must consult the per-block flag, never only `stale`:
+ *   stale == true  => only the CORE ops data (LixingXing) is untrustworthy
+ *   ops_ok / mail_ok / dev_ok  => per-block trust
+ * This is deliberate: a mail outage must not grey out the sales tiles.
+ * -------------------------------------------------------------------------- */
+
+#define NET_MAX_STOCKOUT   10   /**< stockout detail rows kept */
+#define NET_MAX_JOBS        8   /**< cron job rows kept */
+#define NET_MAX_PROJECTS    8   /**< project rows kept */
+#define NET_MAX_PLATFORMS   8   /**< per-platform rows kept */
+#define NET_MAX_COUNTRIES  12   /**< per-country rows kept */
+
+/** last_exit_code sentinel: launchd had no recorded exit code. */
+#define NET_EXIT_UNKNOWN  (-999)
+
+/** One stockout-risk SKU from FBA inventory (缺货 / 低库存). */
+typedef struct {
+    char store[16];        /**< e.g. "XWK-US" */
+    char sku[20];
+    char asin[16];
+    char health[12];       /**< "缺货" / "低库存" */
+    char days[12];         /**< days of supply, kept as text ("0.00") */
+    int  fulfillable;      /**< afn_fulfillable_quantity */
+} panel_stockout_t;
+
+/** One monitored launchd job on the Mac (pushed heartbeat). */
+typedef struct {
+    char   name[24];       /**< e.g. "每日邮件汇总" */
+    bool   ok;
+    double age_hours;      /**< wall-clock silence */
+    double awake_age_hours;/**< silence counted only while the Mac was awake */
+    double max_age_hours;  /**< threshold for awake_age_hours */
+    int    last_exit_code; /**< NET_EXIT_UNKNOWN when launchd has no record */
+    char   evidence[32];   /**< evidence file basename used for liveness */
+} panel_job_t;
+
+/** 一条「平台」或「国家」的今日排行项。 */
+typedef struct {
+    char name[20];   /**< e.g. "Amazon" / "日本"（国家已跨平台合并） */
+    int  orders;     /**< 今日单量 */
+    int  units;      /**< 今日销量（件） */
+    int  yday_units; /**< 昨日销量（件），用于趋势对比 */
+} panel_rank_t;
+
+/** One project from the Mac's PROJECT.md snapshot. */
+typedef struct {
+    char name[24];
+    char progress[8];      /**< e.g. "80%" */
+    char updated[12];      /**< e.g. "2026-09-09" */
+} panel_project_t;
+
+/**
+ * Latest panel-hub payload, copied out under lock.
+ *
+ * valid==false means the most recent fetch failed; all fields then carry the
+ * previous successful data so the UI can show a STALE view instead of an
+ * empty screen. seq increments on every publish (success or failure) so the
+ * UI can detect transitions.
+ */
+typedef struct {
+    uint32_t seq;
+    bool     valid;        /**< last fetch (HTTP+parse) succeeded */
+
+    /* --- ops: LixingXing sales + FBA stockout (the CORE block) --- */
+    bool     stale;        /**< top-level flag: core ops data untrustworthy */
+    bool     ops_ok;
+    char     ops_fetched_at[24];  /**< when the hub last refreshed ops */
+    /* 销售：RMB 由中枢按实时汇率换算（领星只回 USD 且无汇率读取接口） */
+    double   today_orders, today_units, today_usd, today_rmb;
+    double   yday_orders,  yday_units,  yday_usd,  yday_rmb;
+    bool     yday_final;   /**< false = US day not closed yet, may revise up */
+    double   month_orders, month_units, month_usd, month_rmb;  /**< 本月累计（1 日起） */
+    int      month_days;   /**< 本月已统计天数 */
+    double   fx_usd_cny;   /**< 换算用的汇率（便于核对） */
+    bool     fx_ok;        /**< 汇率是否为本期真实取到（false = 沿用旧值/兜底） */
+    int      stockout_total;
+    int      stockout_lack; /**< "缺货" bucket */
+    int      stockout_low;  /**< "低库存" bucket */
+
+    /* --- mail: mail-ai-service pending AI drafts --- */
+    bool     mail_ok;
+    int      mail_drafts_pending;
+    double   mail_oldest_hours;  /**< longest wait in the draft queue */
+    int      mail_today_received;
+
+    /* --- dev: Mac push heartbeat (cron jobs + projects) --- */
+    bool     dev_ok;
+    double   dev_age_minutes;    /**< >45 means the Mac is offline */
+    int      jobs_total, jobs_ok;
+    char     mac_host[24];
+
+    /* --- 按平台 / 按国家的**今日**拆分（来自 statisticsList，无额外 API 调用）--- */
+    int platform_count;
+    panel_rank_t platforms[NET_MAX_PLATFORMS];
+    int country_count;
+    panel_rank_t countries[NET_MAX_COUNTRIES];
+
+    int stockout_count;
+    panel_stockout_t stockout[NET_MAX_STOCKOUT];
+    int job_count;
+    panel_job_t jobs[NET_MAX_JOBS];
+    int project_count;
+    panel_project_t projects[NET_MAX_PROJECTS];
+} panel_snapshot_t;
+
+/* --------------------------------------------------------------------------
  * Control commands (UI thread -> worker thread queue)
  * -------------------------------------------------------------------------- */
 
@@ -216,6 +325,16 @@ void net_worker_get_weather_snapshot(weather_snapshot_t * out);
  * Return only the weather snapshot's sequence number (lightweight peek).
  */
 uint32_t net_worker_get_weather_seq(void);
+
+/**
+ * Copy the latest panel-hub snapshot out under lock. Always succeeds.
+ */
+void net_worker_get_panel_snapshot(panel_snapshot_t * out);
+
+/**
+ * Return only the panel snapshot's sequence number (lightweight peek).
+ */
+uint32_t net_worker_get_panel_seq(void);
 
 #ifdef __cplusplus
 }

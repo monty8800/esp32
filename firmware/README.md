@@ -89,8 +89,10 @@ fw> restart
 
 ## 目录要点
 
-- `main/business/` — UI 页面与三路网络客户端（ha/server/weather）+
+- `main/business/` — UI 页面与**四路**网络客户端（ha / server / weather / **panel**）+
   `net_worker.c` 轮询编排；`third_party/cjson/` 内嵌 cJSON
+  - `panel_client.c` 取自建 **panel-hub**（LXC 117）的聚合 JSON：运营（领星销量/平台/国家/趋势）、
+    邮件（待审草稿）、开发事务（Mac 推送的定时任务心跳 + 项目）；见 `local-server/20-LXC-117-panel-hub.md`
 - `main/curl_shim/` — libcurl 子集 shim（`curl/curl.h` + `curl_shim.c`），
   未支持的 option 返回 `CURLE_UNKNOWN_OPTION` 并打日志，绝不静默忽略；
   已兼容 HTTP/1.0 无 Content-Length 的 `ESP_ERR_HTTP_INCOMPLETE_DATA`

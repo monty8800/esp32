@@ -26,15 +26,13 @@
 #include "esp_app_desc.h"
 
 #include "config_store.h"
-#include "photo_storage.h"
 #include "nvs.h"
 
 static const char *TAG = "webcfg";
 
 static httpd_handle_t s_server = NULL;
 
-static esp_err_t upload_post_handler(httpd_req_t *req);
-static esp_err_t clear_photos_handler(httpd_req_t *req);
+static esp_err_t photo_gone_handler(httpd_req_t *req);
 
 /*-----------------------------
  * HTML helpers
@@ -185,46 +183,6 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     append_field(html_buf, sizeof(html_buf), &off, "weather_url", "天气 API", false, true);
     off += snprintf(html_buf + off, sizeof(html_buf) - off, "</div>\n");
 
-    /* Section: Photo frame. */
-    int local_photos = 0;
-    {
-        FILE *mf = fopen("/spiffs/p/manifest.json", "r");
-        if (mf) {
-            char mb[64];
-            if (fgets(mb, sizeof(mb), mf)) {
-                char *p = strstr(mb, "\"count\"");
-                if (p) { p = strchr(p, ':'); if (p) local_photos = atoi(p + 1); }
-            }
-            fclose(mf);
-        }
-    }
-    off += snprintf(html_buf + off, sizeof(html_buf) - off,
-        "<div class=\"section\"><h2>电子相册</h2>\n"
-        "<div class=\"field\"><label>本地照片（%d 张）</label>"
-        "<div style=\"display:flex;gap:8px;margin-top:6px\">"
-        "<label style=\"flex:1;cursor:pointer;min-height:44px;display:flex;align-items:center;"
-        "justify-content:center;background:#232d39;border:1px solid #2c3947;border-radius:8px;"
-        "color:#e6edf3;font-size:14px\">"
-        "📷 选择照片"
-        "<input type=\"file\" id=\"pf\" accept=\"image/jpeg,image/png,image/webp\" "
-        "style=\"display:none\"></label>"
-        "<button type=\"button\" id=\"ub\" onclick=\"upl()\" "
-        "style=\"flex:1;min-height:44px;background:#2dd4bf;color:#0b1116;border:none;"
-        "border-radius:8px;font-size:14px;font-weight:600;cursor:pointer\">"
-        "上传</button>"
-        "<button type=\"button\" onclick=\"clr()\" "
-        "style=\"flex:0 0 auto;min-height:44px;padding:0 12px;background:#dc2626;color:#fff;"
-        "border:none;border-radius:8px;font-size:14px;cursor:pointer\">"
-        "清除</button></div>"
-        "<div id=\"pr\" style=\"font-size:13px;color:#94a3b3;margin-top:8px\"></div></div>\n",
-        local_photos);
-    append_field(html_buf, sizeof(html_buf), &off, "photo_source_url",
-                 "照片列表 URL (JSON)", false, true);
-    off += snprintf(html_buf + off, sizeof(html_buf) - off,
-        "<p style=\"font-size:12px;color:#64748a;margin-top:8px\">"
-        "浏览器自动压缩，无需公网。"
-        "JSON 格式：{&quot;photos&quot;: [&quot;http://host/img1.jpg&quot;, ...]}"
-        "</p>\n");
     off += snprintf(html_buf + off, sizeof(html_buf) - off, "</div>\n");
     
     /* Section: System. */
@@ -278,7 +236,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         "b.disabled=true;b.textContent='保存中…';return true;}"
         "var FQ=null,CQ=null,PW=480;"
         "var cr={im:null,s:1,ix:0,iy:0,iw:0,ih:0,pw:PW,dr:false,dx:0,dy:0};"
-        "document.getElementById('pf').addEventListener('change',function(e){"
+        "var pf=document.getElementById('pf');if(pf)pf.addEventListener('change',function(e){"
         "if(e.target.files.length===0)return;"
         "var f=e.target.files[0];"
         "FQ={name:f.name,src:null,blob:null,ready:false};"
@@ -477,67 +435,19 @@ static esp_err_t save_post_handler(httpd_req_t *req)
 }
 
 /*-----------------------------
- * POST /upload_photo handler
+ * 照片相关端点：已停用
  *
- * Receives a browser-compressed JPEG as the raw POST body and saves it
- * to SPIFFS via photo_storage_save().
+ * 电子相册功能 2026-09-16 按用户指令移除 —— 显示端每帧重绘约 1.3 秒
+ * （根因：LVGL 对 RAW JPEG 变量源每帧整幅重解码），修复代价过高。
+ * 这里保留两个 URI 只为让旧版配置页的残留 JS 拿到明确的 410 而非 404，
+ * 避免控制台报错混淆；功能本身已不存在。
  *----------------------------*/
-static esp_err_t upload_post_handler(httpd_req_t *req)
+static esp_err_t photo_gone_handler(httpd_req_t *req)
 {
-    int content_len = req->content_len;
-    if (content_len <= 0 || content_len > 512 * 1024) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
-        return ESP_FAIL;
-    }
-
-    uint8_t *buf = heap_caps_malloc(content_len, MALLOC_CAP_SPIRAM);
-    if (buf == NULL) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-        return ESP_FAIL;
-    }
-
-    int received = 0;
-    while (received < content_len) {
-        int n = httpd_req_recv(req, (char *)(buf + received), content_len - received);
-        if (n <= 0) {
-            free(buf);
-            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Receive failed");
-            return ESP_FAIL;
-        }
-        received += n;
-    }
-
-    int idx = photo_storage_save(buf, (uint32_t)content_len);
-    free(buf);
-
-    if (idx < 0) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Save failed");
-        return ESP_FAIL;
-    }
-
-    char resp[128];
-    int len = snprintf(resp, sizeof(resp),
-        "{\"ok\":true,\"index\":%d,\"size\":%d}", idx, content_len);
+    httpd_resp_set_status(req, "410 Gone");
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, resp, len);
-    return ESP_OK;
-}
-
-/*-----------------------------
- * POST /clear_photos handler
- *
- * Deletes all stored photos from SPIFFS.
- *----------------------------*/
-static esp_err_t clear_photos_handler(httpd_req_t *req)
-{
-    esp_err_t err = photo_storage_clear();
-    if (err != ESP_OK) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Clear failed");
-        return ESP_FAIL;
-    }
-    const char *resp = "{\"ok\":true}";
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, resp, strlen(resp));
+    httpd_resp_send(req, "{\"ok\":false,\"error\":\"photo feature removed\"}",
+                    HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
@@ -585,14 +495,14 @@ esp_err_t web_config_start(void)
     const httpd_uri_t upload_uri = {
         .uri = "/upload_photo",
         .method = HTTP_POST,
-        .handler = upload_post_handler,
+        .handler = photo_gone_handler,
     };
     httpd_register_uri_handler(s_server, &upload_uri);
 
     const httpd_uri_t clear_uri = {
         .uri = "/clear_photos",
         .method = HTTP_POST,
-        .handler = clear_photos_handler,
+        .handler = photo_gone_handler,
     };
     httpd_register_uri_handler(s_server, &clear_uri);
 

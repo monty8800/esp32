@@ -19,6 +19,7 @@
 #include "ui/dashboard_page.h"
 #include "ui/devices_page.h"
 #include "ui/server_page.h"
+#include "ui/overview_page.h"
 #include "ui_drain.h"
 #include "wifi_sta.h"
 
@@ -39,16 +40,20 @@ static void ui_drain_cb(lv_timer_t * t)
     static bool srv_seen = false;
     static uint32_t last_wx_seq = 0;
     static bool wx_seen = false;
+    static uint32_t last_panel_seq = 0;
+    static bool panel_seen = false;
     static int last_minute = -1;
 
-    /*--- Cheap seq peek (12 bytes total, 6 lock/unlock cycles) ---*/
+    /*--- Cheap seq peek (16 bytes total, 8 lock/unlock cycles) ---*/
     uint32_t ha_seq  = net_worker_get_ha_seq();
     uint32_t srv_seq = net_worker_get_server_seq();
     uint32_t wx_seq  = net_worker_get_weather_seq();
+    uint32_t panel_seq = net_worker_get_panel_seq();
 
     bool ha_new = !ha_seen || ha_seq != last_ha_seq;
     bool srv_new = !srv_seen || srv_seq != last_srv_seq;
     bool wx_new = !wx_seen || wx_seq != last_wx_seq;
+    bool panel_new = !panel_seen || panel_seq != last_panel_seq;
 
     /*--- HA snapshot: always copy (~330 bytes, cheap) for status bar ---*/
     static ha_snapshot_t ha;   /* static for stack safety */
@@ -87,6 +92,15 @@ static void ui_drain_cb(lv_timer_t * t)
         wx_seen = true;
         last_wx_seq = wx.seq;
         dashboard_page_update_weather(&wx);
+    }
+
+    /*--- Panel-hub snapshot: ~1.5KB, copy when changed ---*/
+    if(panel_new) {
+        static panel_snapshot_t panel;   /* static for stack safety */
+        net_worker_get_panel_snapshot(&panel);
+        panel_seen = true;
+        last_panel_seq = panel.seq;
+        overview_page_update(&panel);
     }
 
     /*--- Status bar: clock, refreshed only on minute change ---*/

@@ -30,6 +30,7 @@
 #include "ha_client.h"
 #include "server_client.h"
 #include "weather_client.h"
+#include "panel_client.h"
 #include "wifi_sta.h"
 
 #include <stdio.h>
@@ -52,6 +53,10 @@ static const char *TAG = "net";
 #define SRV_POLL_MAX_MS      60000U
 #define WX_POLL_BASE_MS      (30U * 60U * 1000U)   /* 30 minutes */
 #define WX_POLL_RETRY_MS     (5U * 60U * 1000U)    /* 5 minutes on failure */
+/* panel-hub answers from a local state file (~10ms) and refreshes its own
+ * upstreams every 30min, so a 2-minute poll costs nothing. */
+#define PANEL_POLL_BASE_MS   (2U * 60U * 1000U)    /* 2 minutes */
+#define PANEL_POLL_MAX_MS    (10U * 60U * 1000U)   /* 10 minutes on failure */
 #define NET_RETRY_MS         5000U                 /* poll WiFi readiness */
 
 static uint64_t now_ms(void)
@@ -74,6 +79,7 @@ static pthread_cond_t  wake = PTHREAD_COND_INITIALIZER;
 static ha_snapshot_t     ha_snap;      /* guarded by lock */
 static server_snapshot_t srv_snap;     /* guarded by lock */
 static weather_snapshot_t wx_snap;     /* guarded by lock */
+static panel_snapshot_t   panel_snap;   /* guarded by lock */
 
 /* Control ring buffer (guarded by lock, condvar 'wake' signals inserts). */
 #define CTRL_RING_CAP 16
@@ -93,6 +99,8 @@ static uint32_t  srv_fail_rounds;
 static uint32_t  srv_period_ms = SRV_POLL_BASE_MS;
 static bool      wx_failed;                          /* last weather round failed */
 static uint32_t  wx_period_ms = WX_POLL_BASE_MS;
+static uint32_t  panel_fail_rounds;
+static uint32_t  panel_period_ms = PANEL_POLL_BASE_MS;
 
 /* Scratch space for rounds. server_snapshot_t alone is ~15KB (24 hosts x
  * probes x fixed strings) - putting it on the worker's stack blows right
@@ -101,6 +109,7 @@ static uint32_t  wx_period_ms = WX_POLL_BASE_MS;
  * Only the worker thread ever touches these. */
 static server_snapshot_t  s_srv_fresh;
 static weather_snapshot_t s_wx_fresh;
+static panel_snapshot_t   s_panel_fresh;
 
 /*-----------------------------
  * Snapshot publication
@@ -213,6 +222,60 @@ static void srv_round(void)
     pthread_mutex_lock(&lock);
     s_srv_fresh.seq = srv_snap.seq + 1;
     srv_snap = s_srv_fresh;
+    pthread_mutex_unlock(&lock);
+}
+
+static void panel_round(void)
+{
+    static bool logged_once;
+
+    bool ok = panel_client_fetch(&s_panel_fresh);
+
+    if(!ok) {
+        panel_fail_rounds++;
+        uint32_t p = PANEL_POLL_BASE_MS;
+        for(uint32_t i = 0; i < panel_fail_rounds && p < PANEL_POLL_MAX_MS; i++) p *= 2;
+        if(p > PANEL_POLL_MAX_MS) p = PANEL_POLL_MAX_MS;
+        if(p != panel_period_ms) {
+            fprintf(stderr, "[net] panel hub unreachable %u round(s), polling every %u ms\n",
+                    panel_fail_rounds, p);
+            panel_period_ms = p;
+        }
+
+        pthread_mutex_lock(&lock);
+        panel_snap.valid = false;      /* keep previous data as STALE view */
+        panel_snap.seq++;
+        pthread_mutex_unlock(&lock);
+        return;
+    }
+
+    if(panel_fail_rounds > 0) {
+        fprintf(stderr, "[net] panel hub back online, polling every %u ms\n",
+                PANEL_POLL_BASE_MS);
+        panel_fail_rounds = 0;
+        panel_period_ms = PANEL_POLL_BASE_MS;
+    }
+
+    if(!logged_once) {
+        logged_once = true;
+        /* One-shot summary so the data path can be confirmed from the serial
+         * log without looking at the screen. */
+        fprintf(stderr,
+                "[net] panel OK: today %.0f orders / %.0f units / RMB %.0f | "
+                "yesterday %.0f orders / RMB %.0f | month %.0f units / RMB %.0f "
+                "(%d days, fx %.4f ok=%d) | stockout %d | drafts %d | jobs %d/%d\n",
+                s_panel_fresh.today_orders, s_panel_fresh.today_units, s_panel_fresh.today_rmb,
+                s_panel_fresh.yday_orders,  s_panel_fresh.yday_rmb,
+                s_panel_fresh.month_units,  s_panel_fresh.month_rmb,
+                s_panel_fresh.month_days,   s_panel_fresh.fx_usd_cny,
+                (int)s_panel_fresh.fx_ok,
+                s_panel_fresh.stockout_total, s_panel_fresh.mail_drafts_pending,
+                s_panel_fresh.jobs_ok, s_panel_fresh.jobs_total);
+    }
+
+    pthread_mutex_lock(&lock);
+    s_panel_fresh.seq = panel_snap.seq + 1;
+    panel_snap = s_panel_fresh;
     pthread_mutex_unlock(&lock);
 }
 
@@ -339,6 +402,7 @@ static void * worker_main(void * arg)
     uint64_t ha_next  = now_ms();      /* first rounds run immediately */
     uint64_t srv_next = now_ms();
     uint64_t wx_next  = now_ms();
+    uint64_t panel_next = now_ms();
     static bool was_online = false;    /* offline->online edge logging */
 
     while(!stopping) {
@@ -376,6 +440,7 @@ static void * worker_main(void * arg)
             ha_next  = now_ms();       /* run first rounds right away */
             srv_next = now_ms();
             wx_next  = now_ms();
+            panel_next = now_ms();
         }
 
         drain_controls();
@@ -395,11 +460,17 @@ static void * worker_main(void * arg)
             weather_round();
             wx_next = now_ms() + wx_period_ms;
         }
+        drain_controls();
+        if(now >= panel_next) {
+            panel_round();
+            panel_next = now_ms() + panel_period_ms;
+        }
 
         /* Sleep until the earliest deadline, or until a control arrives. */
         uint64_t wake_at = ha_next < srv_next ? ha_next : srv_next;
         if(!ha_ready && wake_at == ha_next) wake_at = srv_next;
         if(wx_next < wake_at) wake_at = wx_next;
+        if(panel_next < wake_at) wake_at = panel_next;
 
         pthread_mutex_lock(&lock);
         while(!stopping && ctrl_head == ctrl_tail) {
@@ -533,4 +604,20 @@ uint32_t net_worker_get_weather_seq(void)
     uint32_t s = wx_snap.seq;
     pthread_mutex_unlock(&lock);
     return s;
+}
+
+uint32_t net_worker_get_panel_seq(void)
+{
+    pthread_mutex_lock(&lock);
+    uint32_t s = panel_snap.seq;
+    pthread_mutex_unlock(&lock);
+    return s;
+}
+
+void net_worker_get_panel_snapshot(panel_snapshot_t * out)
+{
+    if(out == NULL) return;
+    pthread_mutex_lock(&lock);
+    *out = panel_snap;
+    pthread_mutex_unlock(&lock);
 }
