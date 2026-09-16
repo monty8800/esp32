@@ -190,9 +190,10 @@ static void fmt_trend(int today, int yday, char * out, size_t n, lv_color_t * co
     *col = (ip >= 0) ? COL_ACCENT : COL_AMBER;
 }
 
-/** 填充一列列表（平台或国家）；超出 @p item_count 的行隐藏。 */
+/** 填充一列列表（平台或国家）；超出 @p item_count 的行隐藏。
+ *  @param dim 数据陈旧时压暗名称，让「这不是实时的」有视觉区分。 */
 static void fill_lines(ov_line_t * lines, int count,
-                       const panel_rank_t * items, int item_count)
+                       const panel_rank_t * items, int item_count, bool dim)
 {
     char val[UI_CACHE_LEN];
     char trend[UI_CACHE_LEN];
@@ -202,6 +203,8 @@ static void fill_lines(ov_line_t * lines, int count,
             continue;
         }
         lv_obj_remove_flag(lines[i].row, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_text_color(lines[i].name,
+                                    dim ? COL_TEXT_DIM : COL_TEXT, 0);
         ui_set_label_cached(lines[i].name, lines[i].name_cache,
                             sizeof(lines[i].name_cache), items[i].name);
         snprintf(val, sizeof(val), "%d单 %d件", items[i].orders, items[i].units);
@@ -251,16 +254,20 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
     /* ---- 过期/离线横幅：默认隐藏，出问题时才占位 ----
      *
      * 2026-09-16 新增。起因：中枢取数失败时会用上一次的好数据兜底（served_from
-     * = last_good），但本页原先只把三个格子显示成 "--" 并在小字里写「数据已过期」，
-     * 平台/国家区更是整片留白 —— 结果整个页面看起来像「坏了、没数据」，
+     * = last_good），但本页原先把这份兜底数据全扔掉 —— 三个格子显示 "--"，
+     * 平台/国家区 16 行整片留白 —— 结果整个页面看起来像「坏了、没数据」，
      * 用户实际就报了「怎么没数据了」。
      *
      * 因此把「数据是旧的」这件事做成**一眼可见**：深色字压琥珀实底，
      * 在暗色 UI 上对比最强，且放在状态行正下方、销售格之上，视线必经之处。
-     * 取值仍保持 "--"（不显示可能误导的旧数字），警示由本条横幅承担。
      *
-     * 布局注意：本横幅可见时 ops_live 必为假、平台/国家列表必被隐藏，
-     * 故 26px 的高度不会挤压列表行数 —— 两者不会同时出现。 */
+     * 取值策略（同日按用户决定调整）：**照常显示上一次的可用数据**，
+     * 不再退化成 "--"（旧数据也比没有数据有用）。仅在确实没有数据可用时
+     * （fetched_at 为空）才显示 "--"。
+     *
+     * 布局注意：本条 26px 会挤压下方列表行数，故横幅可见时列表**仍在显示**
+     * （有旧数据的情况），需要确认 OV_LINES 行仍放得下 —— 见 build 后的实测。
+     * 只有「完全无数据」时列表才被 lists_fallback 取代，那种情况下空间反而更宽裕。 */
     alert_bar = lv_obj_create(page_root);
     lv_obj_remove_style_all(alert_bar);
     lv_obj_set_width(alert_bar, lv_pct(100));
@@ -370,20 +377,41 @@ void overview_page_update(const panel_snapshot_t * s)
     char hhmm[8];
     const bool ops_live = s->ops_ok && !s->stale;
 
+    /* 「有可用的上次数据」判据 = ops.fetched_at 非空。
+     *
+     * 中枢在取数失败时会沿用上次成功的数据，并且**绝不改写 fetched_at**
+     * （成功才写当前时间；失败且无兜底时为 null）。因此：
+     *   fetched_at 非空 ⟺ 这组数字确实来自某次真实成功采集（可能已经旧了）
+     *   fetched_at 为空 ⟺ 从来没有取到过数，此时才真的该显示 "--"
+     *
+     * 2026-09-16 用户决定：**宁可显示上一次的可用数据，也不要 "--"**。
+     * 原先本页把中枢辛苦留下的兜底数据全扔掉（连列表 16 行都隐藏留白），
+     * 结果一次瞬时抖动就让整块看板看起来像坏了 —— 与中枢
+     * 「0 和不知道是两件完全不同的事」的设计原则相违背。
+     * 现在改为：照常显示旧数值，但用**三重视觉区分**表明它不是实时的：
+     *   1) 顶部醒目的琥珀横幅（写明最后更新时刻）
+     *   2) 数值改用琥珀色（实时为薄荷青）
+     *   3) 列表名称压暗
+     * 只有真的无数据可用时才回到 "--"。 */
+    const bool ops_usable = ops_live || (s->ops_fetched_at[0] != '\0');
+    const lv_color_t ops_col = ops_live ? COL_ACCENT : COL_AMBER;
+
     /* ============ 过期/离线横幅 ============ */
-    /* 措辞刻意区分两种原因：压根联系不上中枢 vs 联系上了但取数失败。
+    /* 措辞刻意区分三种情况：联系不上中枢 / 有旧数据 / 完全无数据。
      * 且必须带「最后 HH:MM」—— 用户最需要知道的是「数据停在什么时候」，
      * 只说「已过期」他无法判断是刚断的还是断了一上午。 */
     char alert[96] = "";
     if(!s->valid) {
         snprintf(alert, sizeof(alert), "中枢离线 · 数据已停止更新");
     }
-    else if(s->stale) {
+    else if(!ops_live) {
         iso_hhmm(s->ops_fetched_at, hhmm, sizeof(hhmm));
-        if(hhmm[0] != '\0')
-            snprintf(alert, sizeof(alert), "运营数据未更新 · 最后 %s", hhmm);
+        if(ops_usable && hhmm[0] != '\0')
+            snprintf(alert, sizeof(alert), "运营取数失败 · 显示 %s 的数据", hhmm);
+        else if(ops_usable)
+            snprintf(alert, sizeof(alert), "运营取数失败 · 显示上次数据");
         else
-            snprintf(alert, sizeof(alert), "运营数据未更新 · 取数失败");
+            snprintf(alert, sizeof(alert), "运营取数失败 · 暂无可显示数据");
     }
     if(alert[0] != '\0') {
         ui_set_label_cached(alert_lbl, alert_cache, sizeof(alert_cache), alert);
@@ -394,43 +422,54 @@ void overview_page_update(const panel_snapshot_t * s)
     }
 
     /* ============ 销售三格：大字 = 件数，副行 = 单量 + RMB ============ */
-    if(ops_live) {
+    if(ops_usable) {
         snprintf(value, sizeof(value), "%.0f 件", s->today_units);
         fmt_rmb(s->today_rmb, rmb, sizeof(rmb));
         snprintf(sub, sizeof(sub), "%.0f单 RMB%s", s->today_orders, rmb);
-        set_cell(&sales_cells[0], value, sub, COL_ACCENT);
+        set_cell(&sales_cells[0], value, sub, ops_col);
     }
     else {
-        set_cell(&sales_cells[0], "--", s->ops_ok ? "数据已过期" : "取数失败", COL_AMBER);
+        set_cell(&sales_cells[0], "--", "取数失败", COL_AMBER);
     }
 
-    if(ops_live) {
+    if(ops_usable) {
         snprintf(value, sizeof(value), "%.0f 件", s->yday_units);
         fmt_rmb(s->yday_rmb, rmb, sizeof(rmb));
         /* 美国站自然日北京时间 15:00 才收口，此前标 * 提示可能上修 */
         snprintf(sub, sizeof(sub), "%.0f单 RMB%s%s", s->yday_orders, rmb,
                  s->yday_final ? "" : "*");
-        set_cell(&sales_cells[1], value, sub, COL_ACCENT);
+        set_cell(&sales_cells[1], value, sub, ops_col);
     }
     else {
-        set_cell(&sales_cells[1], "--", s->ops_ok ? "数据已过期" : "取数失败", COL_AMBER);
+        set_cell(&sales_cells[1], "--", "取数失败", COL_AMBER);
     }
 
-    if(ops_live && s->month_days > 0) {
+    if(ops_usable && s->month_days > 0) {
         snprintf(value, sizeof(value), "%.0f 件", s->month_units);
         fmt_rmb(s->month_rmb, rmb, sizeof(rmb));
         snprintf(sub, sizeof(sub), "%.0f单 RMB%s · %d天",
                  s->month_orders, rmb, s->month_days);
-        set_cell(&sales_cells[2], value, sub, COL_ACCENT);
+        set_cell(&sales_cells[2], value, sub, ops_col);
     }
     else {
-        set_cell(&sales_cells[2], "--", s->ops_ok ? "数据已过期" : "取数失败", COL_AMBER);
+        set_cell(&sales_cells[2], "--", "取数失败", COL_AMBER);
     }
 
     /* ============ 平台 / 国家（今日；国家已跨平台合并）============ */
-    if(ops_live) {
-        fill_lines(plat_lines, OV_LINES, s->platforms, s->platform_count);
-        fill_lines(ctry_lines, OV_LINES, s->countries, s->country_count);
+    /* 横幅占 26px，与列表**同时出现**时会把高度从列表区挤掉。
+     * 不靠估算像素，直接在有横幅时少显示一行 —— 陈旧状态下少一行明细，
+     * 好过把最后一行裁掉一半（那也是「看起来坏了」的一种）。 */
+    const int list_lines = (alert[0] != '\0') ? (OV_LINES - 1) : OV_LINES;
+
+    if(ops_usable) {
+        /* dim = 数据陈旧：名称压暗，数值照常显示（旧数据也比没有好） */
+        fill_lines(plat_lines, list_lines, s->platforms, s->platform_count, !ops_live);
+        fill_lines(ctry_lines, list_lines, s->countries, s->country_count, !ops_live);
+        /* 被降到不用的行必须显式隐藏，否则会残留上一次的内容 */
+        for(int i = list_lines; i < OV_LINES; i++) {
+            lv_obj_add_flag(plat_lines[i].row, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(ctry_lines[i].row, LV_OBJ_FLAG_HIDDEN);
+        }
         lv_obj_remove_flag(lists_row, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(lists_fallback, LV_OBJ_FLAG_HIDDEN);
     }
@@ -439,17 +478,17 @@ void overview_page_update(const panel_snapshot_t * s)
             lv_obj_add_flag(plat_lines[i].row, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(ctry_lines[i].row, LV_OBJ_FLAG_HIDDEN);
         }
-        /* 不留空白：给一句明确交代，并说明会自愈 */
+        /* 真的一条数据都没有时才走这里：给一句明确交代，并说明会自愈 */
         ui_set_label_cached(
             list_hint_lbl, list_hint_cache, sizeof(list_hint_cache),
-            s->ops_ok ? "平台 / 国家明细已暂停更新\n运营取数恢复后自动显示"
-                      : "平台 / 国家明细取数失败\n下一轮采集成功后自动显示");
+            "平台 / 国家明细暂无数据\n下一轮采集成功后自动显示");
         lv_obj_add_flag(lists_row, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(lists_fallback, LV_OBJ_FLAG_HIDDEN);
     }
 
     /* ============ 事务三格 ============ */
-    if(ops_live) {
+    /* 缺货数同样来自 ops 块，故与销售格共用 ops_usable 判据 */
+    if(ops_usable) {
         snprintf(value, sizeof(value), "%d", s->stockout_total);
         snprintf(sub, sizeof(sub), "缺%d 低%d", s->stockout_lack, s->stockout_low);
         set_cell(&txn_cells[0], value, sub,
