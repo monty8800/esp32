@@ -53,6 +53,18 @@ typedef struct {
 static lv_obj_t *  page_root;
 static lv_obj_t *  status_lbl;
 static char        status_cache[UI_CACHE_LEN];
+static lv_obj_t *  alert_bar;                 /* 数据过期 / 中枢离线的醒目横幅 */
+static lv_obj_t *  alert_lbl;
+static char        alert_cache[UI_CACHE_LEN];
+static lv_obj_t *  lists_row;                 /* 平台 / 国家 两列 */
+static lv_obj_t *  lists_fallback;            /* 上面那块的替代说明（二者互斥显示） */
+static lv_obj_t *  list_hint_lbl;
+/* 提示文案含换行，比 UI_CACHE_LEN 长，故单独给足缓冲。
+ * ⚠️ 缓存**绝不能短于文案**：ui_set_label_cached 用 strcmp 去重，
+ * 截断后两个前缀相同的长文案会被误判为「没变」，从而漏掉应有的刷新。
+ * （这条是 -Werror=string-compare 抓出来的，不要为了过编译而关掉该警告。） */
+#define OV_HINT_CACHE_LEN 96
+static char        list_hint_cache[OV_HINT_CACHE_LEN];
 static ov_cell_t   sales_cells[OV_SALES_CELLS];
 static ov_cell_t   txn_cells[OV_TXN_CELLS];
 static ov_line_t   plat_lines[OV_LINES];
@@ -236,6 +248,40 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
     lv_obj_set_style_text_color(status_lbl, COL_TEXT_DIM, 0);
     lv_label_set_text(status_lbl, "正在获取数据…");
 
+    /* ---- 过期/离线横幅：默认隐藏，出问题时才占位 ----
+     *
+     * 2026-09-16 新增。起因：中枢取数失败时会用上一次的好数据兜底（served_from
+     * = last_good），但本页原先只把三个格子显示成 "--" 并在小字里写「数据已过期」，
+     * 平台/国家区更是整片留白 —— 结果整个页面看起来像「坏了、没数据」，
+     * 用户实际就报了「怎么没数据了」。
+     *
+     * 因此把「数据是旧的」这件事做成**一眼可见**：深色字压琥珀实底，
+     * 在暗色 UI 上对比最强，且放在状态行正下方、销售格之上，视线必经之处。
+     * 取值仍保持 "--"（不显示可能误导的旧数字），警示由本条横幅承担。
+     *
+     * 布局注意：本横幅可见时 ops_live 必为假、平台/国家列表必被隐藏，
+     * 故 26px 的高度不会挤压列表行数 —— 两者不会同时出现。 */
+    alert_bar = lv_obj_create(page_root);
+    lv_obj_remove_style_all(alert_bar);
+    lv_obj_set_width(alert_bar, lv_pct(100));
+    lv_obj_set_height(alert_bar, 26);
+    lv_obj_set_style_bg_color(alert_bar, COL_AMBER, 0);
+    lv_obj_set_style_bg_opa(alert_bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(alert_bar, 5, 0);
+    lv_obj_set_style_pad_hor(alert_bar, 8, 0);
+    lv_obj_set_layout(alert_bar, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(alert_bar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(alert_bar, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_remove_flag(alert_bar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(alert_bar, LV_OBJ_FLAG_HIDDEN);
+
+    alert_lbl = lv_label_create(alert_bar);
+    lv_obj_set_style_text_font(alert_lbl, font_sm, 0);
+    lv_obj_set_style_text_color(alert_lbl, COL_BAR, 0);   /* 深色字压琥珀底 */
+    lv_label_set_text(alert_lbl, "");
+    alert_cache[0] = '\0';
+
     /* ---- 第一行：销售三格 ---- */
     lv_obj_t * sales_row = lv_obj_create(page_root);
     lv_obj_remove_style_all(sales_row);
@@ -249,7 +295,7 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
         build_cell(sales_row, &sales_cells[i], OV_SALES_TITLES[i], font_sm, font_lg);
 
     /* ---- 第二段：平台 / 国家 两列并排（吃掉剩余高度）---- */
-    lv_obj_t * lists_row = lv_obj_create(page_root);
+    lists_row = lv_obj_create(page_root);
     lv_obj_remove_style_all(lists_row);
     lv_obj_set_width(lists_row, lv_pct(100));
     lv_obj_set_flex_grow(lists_row, 1);
@@ -275,6 +321,32 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
         }
     }
 
+    /* ---- 列表不可用时的替代说明（与 lists_row 互斥显示）----
+     *
+     * 原先的情况：取数失败时把 16 行列表全部隐藏，该区域变成一整片空白，
+     * 没有任何文字说明 —— 这是「看起来像坏了」的主要来源。
+     * 现在改为显示居中的两行说明，并与 lists_row 交替出现。
+     * 二者都设 flex_grow(1)，而 LVGL 的 flex 布局会跳过隐藏对象，故切换时不需手动调尺寸。 */
+    lists_fallback = lv_obj_create(page_root);
+    lv_obj_remove_style_all(lists_fallback);
+    lv_obj_set_width(lists_fallback, lv_pct(100));
+    lv_obj_set_flex_grow(lists_fallback, 1);
+    lv_obj_set_layout(lists_fallback, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(lists_fallback, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(lists_fallback, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(lists_fallback, 4, 0);
+    lv_obj_remove_flag(lists_fallback, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(lists_fallback, LV_OBJ_FLAG_HIDDEN);
+
+    list_hint_lbl = lv_label_create(lists_fallback);
+    lv_obj_set_style_text_font(list_hint_lbl, font_sm, 0);
+    lv_obj_set_style_text_color(list_hint_lbl, COL_TEXT_DIM, 0);
+    lv_obj_set_style_text_align(list_hint_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(list_hint_lbl, lv_pct(100));
+    lv_label_set_text(list_hint_lbl, "");
+    list_hint_cache[0] = '\0';
+
     /* ---- 第三行：事务三格 ---- */
     lv_obj_t * txn_row = lv_obj_create(page_root);
     lv_obj_remove_style_all(txn_row);
@@ -297,6 +369,29 @@ void overview_page_update(const panel_snapshot_t * s)
     char rmb[16];
     char hhmm[8];
     const bool ops_live = s->ops_ok && !s->stale;
+
+    /* ============ 过期/离线横幅 ============ */
+    /* 措辞刻意区分两种原因：压根联系不上中枢 vs 联系上了但取数失败。
+     * 且必须带「最后 HH:MM」—— 用户最需要知道的是「数据停在什么时候」，
+     * 只说「已过期」他无法判断是刚断的还是断了一上午。 */
+    char alert[96] = "";
+    if(!s->valid) {
+        snprintf(alert, sizeof(alert), "中枢离线 · 数据已停止更新");
+    }
+    else if(s->stale) {
+        iso_hhmm(s->ops_fetched_at, hhmm, sizeof(hhmm));
+        if(hhmm[0] != '\0')
+            snprintf(alert, sizeof(alert), "运营数据未更新 · 最后 %s", hhmm);
+        else
+            snprintf(alert, sizeof(alert), "运营数据未更新 · 取数失败");
+    }
+    if(alert[0] != '\0') {
+        ui_set_label_cached(alert_lbl, alert_cache, sizeof(alert_cache), alert);
+        lv_obj_remove_flag(alert_bar, LV_OBJ_FLAG_HIDDEN);
+    }
+    else {
+        lv_obj_add_flag(alert_bar, LV_OBJ_FLAG_HIDDEN);
+    }
 
     /* ============ 销售三格：大字 = 件数，副行 = 单量 + RMB ============ */
     if(ops_live) {
@@ -336,12 +431,21 @@ void overview_page_update(const panel_snapshot_t * s)
     if(ops_live) {
         fill_lines(plat_lines, OV_LINES, s->platforms, s->platform_count);
         fill_lines(ctry_lines, OV_LINES, s->countries, s->country_count);
+        lv_obj_remove_flag(lists_row, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(lists_fallback, LV_OBJ_FLAG_HIDDEN);
     }
     else {
         for(int i = 0; i < OV_LINES; i++) {
             lv_obj_add_flag(plat_lines[i].row, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(ctry_lines[i].row, LV_OBJ_FLAG_HIDDEN);
         }
+        /* 不留空白：给一句明确交代，并说明会自愈 */
+        ui_set_label_cached(
+            list_hint_lbl, list_hint_cache, sizeof(list_hint_cache),
+            s->ops_ok ? "平台 / 国家明细已暂停更新\n运营取数恢复后自动显示"
+                      : "平台 / 国家明细取数失败\n下一轮采集成功后自动显示");
+        lv_obj_add_flag(lists_row, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(lists_fallback, LV_OBJ_FLAG_HIDDEN);
     }
 
     /* ============ 事务三格 ============ */
