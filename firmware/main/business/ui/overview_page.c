@@ -370,17 +370,27 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
     lv_obj_remove_flag(lists_row, LV_OBJ_FLAG_SCROLLABLE);
 
     for(int col = 0; col < 2; col++) {
-        lv_obj_t * box = lv_obj_create(lists_row);
-        lv_obj_remove_style_all(box);
+        /* 列表面板也用**带标题边框盒**（step 3 只改了读数盒，这里补上）——
+         * 边框 + 骑在边框上的标题，与读数盒同一套语言。
+         *
+         * ⚠️ 顺带修掉一处会切行的浪费：lists_row 已按 13px 预留了标题位，
+         *    但面板仍在**盒内**画 kicker，等于 13px 白占 + 盒内又占 20px。
+         *    按实际常量核算：列表区可用 187px，而「盒内 kicker 20 + 8 行×20 +
+         *    行间距 7」正好 = 187 —— **零余量**，最后一行随时可能被切。
+         *    改用骑边框标题后不再需要盒内 kicker，正好把这 20px 还给行：
+         *    需要 167 vs 可用 187，留出 20px 余量。
+         *
+         * 这类「预留了资源却没用上」的浪费光看代码看不出来，
+         * 是**把常量逐个加起来核算**才发现的。 */
+        lv_obj_t * box = ui_titled_box(lists_row,
+                                       col == 0 ? "平台 · 今日" : "国家 · 今日",
+                                       font_sm);
         lv_obj_set_flex_grow(box, 1);
         lv_obj_set_height(box, lv_pct(100));
         lv_obj_set_layout(box, LV_LAYOUT_FLEX);
         lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_all(box, 4, 0);
         lv_obj_set_style_pad_row(box, 1, 0);
-        lv_obj_remove_flag(box, LV_OBJ_FLAG_SCROLLABLE);
-
-        ui_make_kicker(box, col == 0 ? "平台 · 今日" : "国家 · 今日",
-                       COL_ACCENT, font_sm);
         for(int i = 0; i < OV_LINES; i++) {
             build_line(box, col == 0 ? &plat_lines[i] : &ctry_lines[i], font_sm);
         }
