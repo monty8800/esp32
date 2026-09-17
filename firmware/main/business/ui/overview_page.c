@@ -52,10 +52,20 @@ typedef struct {
 
 static lv_obj_t *  page_root;
 static lv_obj_t *  status_lbl;
-static char        status_cache[UI_CACHE_LEN];
+/* 状态行最长文案约 49 字节（「中枢离线 · 上次数据 · 2026年9月17日」），
+ * 恰好超过 UI_CACHE_LEN(48) —— 这是原有代码就存在的隐患，2026-09-17 一并修掉。
+ * 与生成该文案的 status[] 保持同尺寸。 */
+#define OV_STATUS_LEN 96
+static char        status_cache[OV_STATUS_LEN];
 static lv_obj_t *  alert_bar;                 /* 数据过期 / 中枢离线的醒目横幅 */
 static lv_obj_t *  alert_lbl;
-static char        alert_cache[UI_CACHE_LEN];
+/* 横幅文案最长约 56 字节（「运营数据未更新 · 最后 00:55（6.1 小时前）」），
+ * 比 UI_CACHE_LEN(48) 长，故单独给足。**与生成该文案的 alert[] 必须同尺寸**。
+ * ⚠️ 编译器**抓不到**这一处：文案是 snprintf 运行时生成的，不触发
+ * -Werror=string-compare（那条只对字面量生效）。缓存短于文案时
+ * ui_set_label_cached 的 strcmp 去重会把不同文案误判成「没变」而漏刷新。 */
+#define OV_ALERT_LEN 96
+static char        alert_cache[OV_ALERT_LEN];
 static lv_obj_t *  lists_row;                 /* 平台 / 国家 两列 */
 static lv_obj_t *  lists_fallback;            /* 上面那块的替代说明（二者互斥显示） */
 static lv_obj_t *  list_hint_lbl;
@@ -375,6 +385,18 @@ void overview_page_update(const panel_snapshot_t * s)
     char sub[UI_CACHE_LEN];
     char rmb[16];
     char hhmm[8];
+    time_t nowt = time(NULL);
+
+    /* ⚠️ 不要在固件里自己判「数据放了多久」—— 中枢已经判了，而且它才是权威。
+     *
+     * 2026-09-17 的教训：为支持「凌晨 1–8 点不采集」，我先在固件里按 fetched_at
+     * 算了一次数据年龄（阈值 15 分钟）。写完才发现中枢的 load_panel()
+     * **早在服务时就会按年龄判过期**（STALE_AFTER_SECONDS = 90 分钟），
+     * 并给出 `stale_reason` 字段（"数据已 N 分钟未成功刷新"）。
+     * 我等于造了第二份会漂移的事实源，而且两处阈值还不一致。
+     *
+     * 现在职责划分明确：**判过期（数据问题）归中枢，怎么显示（展示问题）归这里。**
+     * 固件只忠实采用中枢的 stale / stale_reason，不自行推断。 */
     const bool ops_live = s->ops_ok && !s->stale;
 
     /* 「有可用的上次数据」判据 = ops.fetched_at 非空。
@@ -397,21 +419,44 @@ void overview_page_update(const panel_snapshot_t * s)
     const lv_color_t ops_col = ops_live ? COL_ACCENT : COL_AMBER;
 
     /* ============ 过期/离线横幅 ============ */
-    /* 措辞刻意区分三种情况：联系不上中枢 / 有旧数据 / 完全无数据。
+    /* 措辞刻意区分**四种**情况，因为它们的处置完全不同：
+     *   1) 联系不上中枢        → 数据已停止更新
+     *   2) 采集失败但有兜底    → 运营取数失败
+     *   3) 采集成功但数据放久了 → 运营数据未更新（典型场景：凌晨 1–8 点不采集）
+     *   4) 完全无数据可显示     → 暂无可显示数据
+     * 2 与 3 **必须措辞不同**：夜间暂停每天都会发生，若都写「取数失败」，
+     * 用户每天早上都会把它误读成故障，久之就对该提示脱敏了。
      * 且必须带「最后 HH:MM」—— 用户最需要知道的是「数据停在什么时候」，
      * 只说「已过期」他无法判断是刚断的还是断了一上午。 */
-    char alert[96] = "";
+    char alert[OV_ALERT_LEN] = "";
     if(!s->valid) {
         snprintf(alert, sizeof(alert), "中枢离线 · 数据已停止更新");
     }
     else if(!ops_live) {
         iso_hhmm(s->ops_fetched_at, hhmm, sizeof(hhmm));
-        if(ops_usable && hhmm[0] != '\0')
-            snprintf(alert, sizeof(alert), "运营取数失败 · 显示 %s 的数据", hhmm);
-        else if(ops_usable)
-            snprintf(alert, sizeof(alert), "运营取数失败 · 显示上次数据");
-        else
+
+        if(!ops_usable) {
+            /* 从来没有取到过数：这才是真的没东西可显示 */
             snprintf(alert, sizeof(alert), "运营取数失败 · 暂无可显示数据");
+        }
+        else if(s->ops_stale_reason[0] != '\0') {
+            /* 中枢说「数据放久了」（它按年龄判的过期，典型场景是夜间不采集）——
+             * 直接采用中枢给的措辞。这**不是取数失败**，措辞必须区分：
+             * 夜间暂停每天都会发生，若也写「取数失败」，用户每天早上都会误读成
+             * 故障，久之就对该提示脱敏了。 */
+            if(hhmm[0] != '\0')
+                snprintf(alert, sizeof(alert), "%s · 最后 %s",
+                         s->ops_stale_reason, hhmm);
+            else
+                snprintf(alert, sizeof(alert), "%s", s->ops_stale_reason);
+        }
+        else if(hhmm[0] != '\0') {
+            /* 中枢没给 stale_reason ⇒ 是这一轮采集真的失败了 */
+            snprintf(alert, sizeof(alert), "运营取数失败 · 显示 %s 的数据", hhmm);
+        }
+        else {
+            snprintf(alert, sizeof(alert), "运营取数失败 · 显示上次数据");
+        }
     }
     if(alert[0] != '\0') {
         ui_set_label_cached(alert_lbl, alert_cache, sizeof(alert_cache), alert);
@@ -529,9 +574,8 @@ void overview_page_update(const panel_snapshot_t * s)
     }
 
     /* ============ 状态行：运营时间 · 汇率 · 今天的年月日 ============ */
-    char status[96];
+    char status[OV_STATUS_LEN];
     char date_txt[48] = "";
-    time_t nowt = time(NULL);
     struct tm lt;
     if(localtime_r(&nowt, &lt) != NULL) {
         snprintf(date_txt, sizeof(date_txt), "%d年%d月%d日",
@@ -552,8 +596,9 @@ void overview_page_update(const panel_snapshot_t * s)
     if(!s->valid) {
         snprintf(status, sizeof(status), "中枢离线 · 上次数据 · %s", date_txt);
     }
-    else if(s->stale) {
-        snprintf(status, sizeof(status), "运营数据已过期 · %s", date_txt);
+    else if(!ops_live) {
+        /* 采集失败与「放久了」合并成一句：只说「已过期」，具体原因由顶部横幅给 */
+        snprintf(status, sizeof(status), "运营数据非实时 · %s", date_txt);
     }
     else {
         iso_hhmm(s->ops_fetched_at, hhmm, sizeof(hhmm));
@@ -562,6 +607,6 @@ void overview_page_update(const panel_snapshot_t * s)
     }
 
     lv_obj_set_style_text_color(status_lbl,
-                                (s->valid && !s->stale) ? COL_TEXT_DIM : COL_AMBER, 0);
+                                (s->valid && ops_live) ? COL_TEXT_DIM : COL_AMBER, 0);
     ui_set_label_cached(status_lbl, status_cache, sizeof(status_cache), status);
 }

@@ -209,6 +209,12 @@ typedef struct {
     bool     stale;        /**< top-level flag: core ops data untrustworthy */
     bool     ops_ok;
     char     ops_fetched_at[24];  /**< when the hub last refreshed ops */
+    /** 中枢给出的「为何不可信」的可读说明（如「数据已 3.0 小时未成功刷新」）。
+     *
+     * 中枢会在**服务时**按数据年龄判过期（STALE_AFTER_SECONDS=90 分钟），
+     * 此时 ops.ok 仍为 true，只有这个字段能区分「数据放久了」与「取数失败」。
+     * **固件不要自己算年龄** —— 判过期归中枢，固件只忠实展示，避免两份会漂移的事实源。 */
+    char     ops_stale_reason[64];
     /* 销售：RMB 由中枢按实时汇率换算（领星只回 USD 且无汇率读取接口） */
     double   today_orders, today_units, today_usd, today_rmb;
     double   yday_orders,  yday_units,  yday_usd,  yday_rmb;

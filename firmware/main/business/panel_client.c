@@ -289,6 +289,9 @@ static bool parse_panel(const char * text, panel_snapshot_t * out)
     /* --- ops (core: drives the top-level stale flag) --- */
     tmp.ops_ok = json_bool(ops, "ok", false);
     json_str(ops, "fetched_at", tmp.ops_fetched_at, sizeof(tmp.ops_fetched_at));
+    /* 中枢按年龄判过期时给出的说明；缺失（如采集真失败）时留空串。
+     * UI 用它区分「数据放久了」与「取数失败」—— 两者措辞必须不同。 */
+    json_str(ops, "stale_reason", tmp.ops_stale_reason, sizeof(tmp.ops_stale_reason));
     json_day(ops, "today",     &tmp.today_orders, &tmp.today_units, &tmp.today_usd, NULL);
     json_day(ops, "yesterday", &tmp.yday_orders,  &tmp.yday_units,  &tmp.yday_usd,
              &tmp.yday_final);
