@@ -162,6 +162,7 @@ static void build_line(lv_obj_t * parent, ov_line_t * L, const lv_font_t * font_
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(row, 5, 0);   /* 引导线别贴住文字 */
     lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
     L->name = lv_label_create(row);
@@ -169,6 +170,16 @@ static void build_line(lv_obj_t * parent, ov_line_t * L, const lv_font_t * font_
     lv_obj_set_style_text_color(L->name, COL_TEXT, 0);
     lv_label_set_text(L->name, "");
     L->name_cache[0] = '\0';
+
+    /* 引导线：名称与数值之间的细线（效果图里的点线引导符）。
+     * 用 flex_grow 吃掉中间剩余宽度 —— 名称自然左对齐、数值仍右对齐，
+     * 线自动铺满中间，不需要任何绝对定位。
+     *
+     * ⚠️ 这是**降级实现**：LVGL 没有虚线/点线，ui_leader_line() 画的是
+     * 1px 暗实线。真点线要每个点一个对象（一行十来个点）—— 16 行就是上百个
+     * 对象，RAM 与重绘都不划算。 */
+    lv_obj_t * lead = ui_leader_line(row);
+    lv_obj_set_flex_grow(lead, 1);
 
     /* 右侧容器：让「数值」与「趋势」成组右对齐 */
     lv_obj_t * right = lv_obj_create(row);
