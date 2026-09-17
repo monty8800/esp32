@@ -273,6 +273,12 @@ typedef enum {
     NET_ACT_LAMP_POWER_ON,        /**< light/turn_on */
     NET_ACT_LAMP_POWER_OFF,       /**< light/turn_off */
     NET_ACT_LAMP_BRIGHTNESS,      /**< light/turn_on + brightness param (1-255) */
+
+    /* 面板自身（与 Home Assistant 无关）：立即刷新数据。
+     *
+     * 走同一套控制队列是有意的 —— 它同样是「一次网络动作」，复用现成的
+     * condvar 立即唤醒机制，不必为它另造一条线程间通路。 */
+    NET_ACT_PANEL_REFRESH,        /**< 让中枢立刻采集一轮，再重新拉取快照 */
 } net_control_action_t;
 
 /* --------------------------------------------------------------------------
@@ -300,6 +306,15 @@ void net_worker_stop(void);
  * NET_ACT_LAMP_BRIGHTNESS (brightness 1-255, clamped).
  */
 void net_worker_post_control(net_control_action_t action, int param);
+
+/**
+ * 请求「立即刷新面板数据」：让中枢马上去领星采集一轮，然后重新拉取快照。
+ *
+ * 可在 **UI 线程**调用 —— 它只是往控制队列投递一条命令并唤醒工作线程，
+ * 真正的网络动作（阻塞 2–5 秒）在工作线程里执行，不会卡住 LVGL。
+ * 完成后 panel_seq 会自增，ui_drain 随即刷新页面（按钮文案也在此复位）。
+ */
+void net_worker_request_panel_refresh(void);
 
 /**
  * Copy the latest HA snapshot out under lock. Always succeeds.

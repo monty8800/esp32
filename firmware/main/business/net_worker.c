@@ -101,6 +101,9 @@ static bool      wx_failed;                          /* last weather round faile
 static uint32_t  wx_period_ms = WX_POLL_BASE_MS;
 static uint32_t  panel_fail_rounds;
 static uint32_t  panel_period_ms = PANEL_POLL_BASE_MS;
+/* 面板轮询的下次时间。提升为文件级静态（原为 worker_main 的局部变量），
+ * 以便手动刷新在完成后能重置节拍 —— 否则刚刷完可能立刻又自动轮询一次。 */
+static uint64_t  panel_next;
 
 /* Scratch space for rounds. server_snapshot_t alone is ~15KB (24 hosts x
  * probes x fixed strings) - putting it on the worker's stack blows right
@@ -323,6 +326,35 @@ static void execute_control(const ctrl_cmd_t * cmd)
     char body[192];
     bool ok = true;
 
+    /* 面板刷新不碰 Home Assistant，单独处理后再 return，不进下面的 switch */
+    if(cmd->action == NET_ACT_PANEL_REFRESH) {
+        uint64_t t0 = now_ms();
+        bool asked = panel_client_refresh();
+        bool got   = panel_client_fetch(&s_panel_fresh);
+        if(!got) {
+            /* 与 panel_round() 的失败分支保持一致：保留旧数据、标记不可信，
+             * 并自增 seq 让界面立刻反映出「取数失败」而不是停在旧画面。 */
+            panel_fail_rounds++;
+            pthread_mutex_lock(&lock);
+            panel_snap.valid = false;
+            panel_snap.seq++;
+            pthread_mutex_unlock(&lock);
+        }
+        else {
+            panel_fail_rounds = 0;
+            pthread_mutex_lock(&lock);
+            panel_snap = s_panel_fresh;
+            panel_snap.valid = true;
+            panel_snap.seq++;
+            pthread_mutex_unlock(&lock);
+        }
+        panel_next = now_ms() + panel_period_ms;   /* 节拍从此刻重新起算 */
+        fprintf(stderr, "[net] manual refresh: hub collect %s, fetch %s, %u ms\n",
+                asked ? "ok" : "FAILED", got ? "ok" : "FAILED",
+                (unsigned)(now_ms() - t0));
+        return;
+    }
+
     switch(cmd->action) {
         case NET_ACT_PURIFIER_MODE_AUTO:
         case NET_ACT_PURIFIER_MODE_SLEEP:
@@ -402,7 +434,7 @@ static void * worker_main(void * arg)
     uint64_t ha_next  = now_ms();      /* first rounds run immediately */
     uint64_t srv_next = now_ms();
     uint64_t wx_next  = now_ms();
-    uint64_t panel_next = now_ms();
+    panel_next = now_ms();
     static bool was_online = false;    /* offline->online edge logging */
 
     while(!stopping) {
@@ -540,6 +572,11 @@ void net_worker_stop(void)
     pthread_join(worker_thread, NULL);
     worker_started = false;
     fprintf(stderr, "[net] worker stopped\n");
+}
+
+void net_worker_request_panel_refresh(void)
+{
+    net_worker_post_control(NET_ACT_PANEL_REFRESH, 0);
 }
 
 void net_worker_post_control(net_control_action_t action, int param)

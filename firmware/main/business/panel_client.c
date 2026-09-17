@@ -400,3 +400,122 @@ bool panel_client_fetch(panel_snapshot_t * out)
 
     return parse_panel(resp_buf, out);
 }
+
+/* --------------------------------------------------------------------------
+ * 手动刷新（总览页「刷新」按钮）
+ * -------------------------------------------------------------------------- */
+
+/** 刷新请求的响应体我们不解析，只要一个能丢弃数据的接收器。
+ *
+ * 刻意用自包含的定长缓冲，**不复用 write_cb** —— 后者写的是全局 resp_buf，
+ * 而本函数可能在 resp_buf 尚未分配时被调用，那样 resp_cap 为 0 会让
+ * `while(new_cap < need) new_cap *= 2;` 死循环。 */
+typedef struct {
+    char * buf;
+    size_t cap;
+    size_t len;
+} small_sink_t;
+
+static size_t small_sink_cb(char * ptr, size_t size, size_t nmemb, void * userdata)
+{
+    small_sink_t * s = (small_sink_t *)userdata;
+    size_t add = size * nmemb;
+    size_t room = (s->cap > s->len + 1) ? (s->cap - s->len - 1) : 0;
+    if(add > room) add = room;              /* 截断即可，本来就只看状态码 */
+    if(add > 0) {
+        memcpy(s->buf + s->len, ptr, add);
+        s->len += add;
+        s->buf[s->len] = '\0';
+    }
+    return size * nmemb;                    /* 如实声明已消费，避免 curl 中止 */
+}
+
+/** 由 PANEL_URL 推出刷新端点：末尾路径段换成 refresh。
+ *
+ * 例：http://192.168.9.216:8790/api/panel → http://192.168.9.216:8790/api/refresh
+ *
+ * 为什么不单独加一个 PANEL_REFRESH_URL 配置项：配置项越多越容易出现两处 host
+ * 填得不一致（一个指向旧 IP），而且用户没有理由只改其中一个。推不出来时才回退。 */
+static void refresh_url(char * out, size_t n)
+{
+    const char * env = getenv("PANEL_URL");
+    const char * base = (env != NULL && env[0] != '\0') ? env : PANEL_API_URL_DEFAULT;
+
+    snprintf(out, n, "%s", base);
+    size_t len = strlen(out);
+    while(len > 0 && out[len - 1] == '/') out[--len] = '\0';   /* 去尾部斜杠 */
+
+    char * slash = strrchr(out, '/');
+    if(slash == NULL || slash == out) {
+        /* 没有路径段（或只剩 "http://"），无法安全推导 → 回退到默认端点 */
+        snprintf(out, n, "%s", PANEL_API_URL_DEFAULT);
+        len = strlen(out);
+        while(len > 0 && out[len - 1] == '/') out[--len] = '\0';
+        slash = strrchr(out, '/');
+        if(slash == NULL) { out[0] = '\0'; return; }
+    }
+    slash[1] = '\0';
+    strncat(out, "refresh", n - strlen(out) - 1);
+}
+
+bool panel_client_refresh(void)
+{
+    char url[192];
+    refresh_url(url, sizeof(url));
+    if(url[0] == '\0') {
+        fprintf(stderr, "panel_client: cannot derive refresh URL from PANEL_URL\n");
+        return false;
+    }
+
+    CURL * h = curl_easy_init();
+    if(h == NULL) {
+        fprintf(stderr, "panel_client: curl_easy_init failed (refresh)\n");
+        return false;
+    }
+
+    char sink_buf[512];
+    small_sink_t sink = { .buf = sink_buf, .cap = sizeof(sink_buf), .len = 0 };
+    sink_buf[0] = '\0';
+
+    /* 不关心响应体，只要一个丢弃用的写回调与缓冲区 */
+    curl_easy_setopt(h, CURLOPT_URL, url);
+    curl_easy_setopt(h, CURLOPT_POST, 1L);
+    curl_easy_setopt(h, CURLOPT_POSTFIELDS, "");
+    /* 中枢会**同步等待采集完成**（实测 2–5 秒）再响应，故超时给到 20 秒；
+     * 连接阶段仍按 3 秒，避免中枢不在时白等。 */
+    curl_easy_setopt(h, CURLOPT_TIMEOUT_MS, 20000L);
+    curl_easy_setopt(h, CURLOPT_CONNECTTIMEOUT_MS, 3000L);
+    curl_easy_setopt(h, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(h, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(h, CURLOPT_WRITEFUNCTION, small_sink_cb);
+    curl_easy_setopt(h, CURLOPT_WRITEDATA, &sink);
+
+    CURLcode res = curl_easy_perform(h);
+    long code = 0;
+    curl_easy_getinfo(h, CURLINFO_RESPONSE_CODE, &code);
+    curl_easy_cleanup(h);
+
+    if(res != CURLE_OK) {
+        fprintf(stderr, "panel_client: POST %s failed: %s\n", url,
+                curl_easy_strerror(res));
+        return false;
+    }
+    /* 200 = 已采集或命中冷却（两者都算受理）；429 = 超每小时上限；其余为错误 */
+    if(code != 200) {
+        fprintf(stderr, "panel_client: POST %s -> HTTP %ld\n", url, code);
+        return false;
+    }
+    return true;
+}
+
+bool panel_client_refresh_fetch(panel_snapshot_t * out)
+{
+    bool asked = panel_client_refresh();
+    /* 无论请求成败都再拉一次：即使刷新失败，也要让界面反映**当前真实状态**
+     * （例如中枢不可达时显示「取数失败」），而不是停在旧画面等下一次轮询。 */
+    bool fetched = panel_client_fetch(out);
+    if(asked && fetched) {
+        fprintf(stderr, "panel_client: manual refresh done\n");
+    }
+    return fetched;
+}

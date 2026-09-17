@@ -45,6 +45,30 @@ extern "C" {
  */
 bool panel_client_fetch(panel_snapshot_t * out);
 
+/**
+ * 请中枢**立即采集一轮**（总览页「刷新」按钮的后端）。
+ *
+ * 用途：中枢 01:00–08:00 停止采集，早上进办公室时想立刻看到最新数字，
+ * 而不必等到 08:00 那一轮。**有意绕过夜间排程** —— 这正是手动刷新存在的意义。
+ *
+ * ⚠️ 这是**阻塞**调用：中枢会同步等待采集完成（实测 2–5 秒）再响应。
+ * 必须在工作线程里调用，绝不能在 LVGL/UI 线程里调用（会卡住界面）。
+ *
+ * 返回 true 仅表示「请求被受理且采集已完成」，**不代表数据一定更新了**
+ * （可能命中中枢的冷却保护）。调用方应紧接着调用 panel_client_refresh_fetch()，
+ * 并以拿到的 generated_at 为准。
+ *
+ * 目标 URL 由 PANEL_URL 自动推出（把最后一段路径换成 refresh），
+ * 这样配置项仍然只有一个 host，不会出现两处填不一致的问题。
+ */
+bool panel_client_refresh(void);
+
+/**
+ * panel_client_refresh() + panel_client_fetch() 的组合：
+ * 先请中枢采集，再拉一次快照。返回 panel_client_fetch() 的结果。
+ */
+bool panel_client_refresh_fetch(panel_snapshot_t * out);
+
 #ifdef __cplusplus
 }
 #endif

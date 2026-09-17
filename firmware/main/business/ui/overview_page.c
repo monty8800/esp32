@@ -66,6 +66,12 @@ static lv_obj_t *  alert_lbl;
  * ui_set_label_cached 的 strcmp 去重会把不同文案误判成「没变」而漏刷新。 */
 #define OV_ALERT_LEN 96
 static char        alert_cache[OV_ALERT_LEN];
+static void refresh_click_cb(lv_event_t * e);  /* 前向声明：定义在 create 之后 */
+
+static lv_obj_t *  refresh_btn;               /* 顶部「刷新」按钮 */
+static lv_obj_t *  refresh_lbl;
+static char        refresh_cache[16];
+static bool        refresh_busy;              /* 刷新进行中：防连点 + 改按钮文案 */
 static lv_obj_t *  lists_row;                 /* 平台 / 国家 两列 */
 static lv_obj_t *  lists_fallback;            /* 上面那块的替代说明（二者互斥显示） */
 static lv_obj_t *  list_hint_lbl;
@@ -254,7 +260,42 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
     lv_obj_set_style_pad_row(page_root, 6, 0);
     lv_obj_remove_flag(page_root, LV_OBJ_FLAG_SCROLLABLE);   /* 一屏放下，不滚动 */
 
-    ui_make_kicker(page_root, "事务总览 OVERVIEW", COL_ACCENT, font_sm);
+    /* ---- 顶部一行：左 kicker + 右「刷新」按钮 ----
+     * 按钮放这里而不是底部事务格旁：视线自然从标题开始，且不占用三格的功能位。
+     * 高度 26px（比 kicker 单独占位多 6px），已在 list_lines 的计算里留出余量。 */
+    lv_obj_t * head_row = lv_obj_create(page_root);
+    lv_obj_remove_style_all(head_row);
+    lv_obj_set_width(head_row, lv_pct(100));
+    lv_obj_set_height(head_row, 26);
+    lv_obj_set_layout(head_row, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(head_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(head_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_remove_flag(head_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    ui_make_kicker(head_row, "事务总览 OVERVIEW", COL_ACCENT, font_sm);
+
+    refresh_btn = lv_obj_create(head_row);
+    lv_obj_remove_style_all(refresh_btn);
+    lv_obj_set_size(refresh_btn, 80, 26);
+    lv_obj_set_style_bg_color(refresh_btn, COL_PANEL_LT, 0);
+    lv_obj_set_style_bg_opa(refresh_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(refresh_btn, 6, 0);
+    lv_obj_set_style_border_color(refresh_btn, COL_BORDER, 0);
+    lv_obj_set_style_border_width(refresh_btn, 1, 0);
+    lv_obj_add_flag(refresh_btn, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(refresh_btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_layout(refresh_btn, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_align(refresh_btn, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    refresh_lbl = lv_label_create(refresh_btn);
+    lv_obj_set_style_text_font(refresh_lbl, font_sm, 0);
+    lv_obj_set_style_text_color(refresh_lbl, COL_ACCENT, 0);
+    lv_label_set_text(refresh_lbl, "刷新");
+    refresh_cache[0] = '\0';
+
+    lv_obj_add_event_cb(refresh_btn, refresh_click_cb, LV_EVENT_CLICKED, NULL);
 
     status_lbl = lv_label_create(page_root);
     lv_obj_set_style_text_font(status_lbl, font_sm, 0);
@@ -375,6 +416,27 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
     lv_obj_remove_flag(txn_row, LV_OBJ_FLAG_SCROLLABLE);
     for(int i = 0; i < OV_TXN_CELLS; i++)
         build_cell(txn_row, &txn_cells[i], OV_TXN_TITLES[i], font_sm, font_lg);
+}
+
+/* --------------------------------------------------------------------------
+ * 手动刷新
+ * -------------------------------------------------------------------------- */
+
+/** 「刷新」按钮：请中枢立刻采集一轮，然后重新拉取。
+ *
+ * 关键：**本回调里绝不能做网络请求**。panel_client_refresh() 会阻塞 2–5 秒
+ * （中枢在服务端同步等采集完成），若在 LVGL 线程里做，整个界面会僵住。
+ * 所以这里只投递一条控制命令；真正的网络动作由 net_worker 的工作线程执行。 */
+static void refresh_click_cb(lv_event_t * e)
+{
+    (void)e;
+    if(refresh_busy) return;                 /* 防连点：一次刷新要几秒，别排队 */
+
+    refresh_busy = true;
+    /* 立刻给反馈：否则用户不知道按钮是否生效，会反复戳 */
+    ui_set_label_cached(refresh_lbl, refresh_cache, sizeof(refresh_cache), "刷新中");
+    lv_obj_add_state(refresh_btn, LV_STATE_DISABLED);
+    net_worker_request_panel_refresh();
 }
 
 void overview_page_update(const panel_snapshot_t * s)
@@ -609,4 +671,13 @@ void overview_page_update(const panel_snapshot_t * s)
     lv_obj_set_style_text_color(status_lbl,
                                 (s->valid && ops_live) ? COL_TEXT_DIM : COL_AMBER, 0);
     ui_set_label_cached(status_lbl, status_cache, sizeof(status_cache), status);
+
+    /* 刷新流程走完 → 复位按钮文案与可点状态。
+     * 本函数由 ui_drain 在 panel_seq 变化时调用，而手动刷新**无论成败**都会
+     * 自增 seq（见 net_worker.c），所以按钮绝不会卡在「刷新中」出不来。 */
+    if(refresh_busy) {
+        refresh_busy = false;
+        ui_set_label_cached(refresh_lbl, refresh_cache, sizeof(refresh_cache), "刷新");
+        lv_obj_remove_state(refresh_btn, LV_STATE_DISABLED);
+    }
 }
