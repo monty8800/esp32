@@ -28,9 +28,16 @@
 extern "C" {
 #endif
 
-/* Defined in fonts/font_cjk_16.c / fonts/font_cjk_20.c (lv_font_conv). */
+/* Defined in fonts/font_cjk_16.c / font_cjk_20.c / font_num_34.c (lv_font_conv). */
 extern const lv_font_t font_cjk_16;
 extern const lv_font_t font_cjk_20;
+/** 34px **纯数字**读数（工业 HMI 大读数，2026-09-18 新增）。
+ *
+ * ⚠️ 刻意不含中文字形（子集仅 18 个符号，约 23KB 源码）。
+ *    大读数旁的单位（件 / 单）必须用 font_cjk_16 单独绘制；
+ *    若要在 34px 里直接排版中文，需把该字加进 gen_fonts.sh 的 NUM_SYMBOLS
+ *    并重新生成，否则会渲染成缺字方块。 */
+extern const lv_font_t font_num_34;
 
 /**
  * Fetch the injected CJK fonts in the same (sm, lg) signature the page
@@ -42,6 +49,13 @@ static inline void ui_fonts_get(const lv_font_t ** font_sm,
 {
     if(font_sm != NULL) *font_sm = &font_cjk_16;
     if(font_lg != NULL) *font_lg = &font_cjk_20;
+}
+
+/** 34px 纯数字读数字体。单独提供而不是塞进 ui_fonts_get，
+ *  以免改动所有既有的页面签名（读数是新样式才需要的东西）。 */
+static inline const lv_font_t * ui_fonts_num(void)
+{
+    return &font_num_34;
 }
 
 #ifdef __cplusplus

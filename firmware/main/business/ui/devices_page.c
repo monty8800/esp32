@@ -121,12 +121,16 @@ static lv_obj_t * build_card(lv_obj_t * parent, int height)
 static lv_obj_t * build_title(lv_obj_t * card, const char * name, lv_color_t tick_col)
 {
     ui_add_corner_tick(card, tick_col);
-    lv_obj_t * title = lv_label_create(card);
-    lv_label_set_text(title, name);
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_text_color(title, COL_TEXT, 0);
-    lv_obj_set_style_text_font(title, f_lg != NULL ? f_lg : &lv_font_montserrat_20, 0);
-    return title;
+    /* 标题改为**骑在边框上**（工业 HMI 语言）。
+     *
+     * 字号由原来的 20px（f_lg）降为 16px（f_sm）：骑边框的标题在工业面板上
+     * 是「标签」而非「正文」，小一号才符合比例 —— 这也与总览页的读数盒一致。
+     *
+     * ⚠️ 标题画在卡外，故卡片要允许溢出；本页 page_root 是**可滚动**的，
+     *    多出来的高度由滚动承担，不存在裁切风险（这点与总览页、驾驶舱页
+     *    完全不同 —— 那两页的溢出只能靠预留空间解决）。 */
+    lv_obj_add_flag(card, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    return ui_riding_title(card, name, f_sm);
 }
 
 /** Small state text right of the title. */
@@ -385,7 +389,9 @@ void devices_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
     lv_obj_set_flex_align(page_root, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_hor(page_root, 18, 0);
-    lv_obj_set_style_pad_top(page_root, 12, 0);
+    /* 12 → 26：给第一张卡「骑在边框上」的标题留出上方空间，
+     * 否则它会被滚动区域裁掉（本页可滚动，故这 14px 由滚动吸收）。 */
+    lv_obj_set_style_pad_top(page_root, 26, 0);
     lv_obj_set_style_pad_bottom(page_root, 16, 0);
     lv_obj_set_style_pad_row(page_root, 12, 0);
     lv_obj_add_flag(page_root, LV_OBJ_FLAG_SCROLLABLE);
