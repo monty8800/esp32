@@ -79,6 +79,9 @@ static inline void ui_style_bezel(lv_obj_t * obj)
     lv_obj_set_style_pad_all(obj, 0, 0);
 }
 
+static inline lv_obj_t * ui_riding_title(lv_obj_t * box, const char * title,
+                                         const lv_font_t * font);
+
 /** 带标题的边框盒 —— 工业 HMI 最标志性的惯用法。
  *
  * 标题文字压在盒子上边框线上，其**不透明底色与屏底一致**，从而「切断」边框。
@@ -101,6 +104,21 @@ static inline lv_obj_t * ui_titled_box(lv_obj_t * parent, const char * title,
      * 只能靠真机眼睛发现，所以在这里主动设上。 */
     lv_obj_add_flag(box, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 
+    ui_riding_title(box, title, font);
+    return box;
+}
+
+/** 给**已存在**的容器加一个「骑在边框上」的标题。
+ *
+ * 与 ui_titled_box() 的区别：不改容器的样式，只加标题 —— 供那些卡片已经
+ * 用 lv_obj_create 自行创建（且内容用 lv_obj_align 绝对定位）的页面使用。
+ *
+ * ⚠️ 调用方须保证：标题画在容器之外，故**整条祖先链都要允许溢出**
+ *    （LV_OBJ_FLAG_OVERFLOW_VISIBLE），否则标题被裁掉且日志无任何痕迹。
+ *    本函数只设容器自己那一层。 */
+static inline lv_obj_t * ui_riding_title(lv_obj_t * box, const char * title,
+                                         const lv_font_t * font)
+{
     lv_obj_t * lbl = lv_label_create(box);
     lv_label_set_text(lbl, title);
     lv_obj_set_style_text_color(lbl, COL_LABEL, 0);
@@ -112,8 +130,7 @@ static inline lv_obj_t * ui_titled_box(lv_obj_t * parent, const char * title,
     lv_obj_set_style_pad_hor(lbl, 3, 0);
     lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 5, -13);   /* 负偏移 = 骑在边框上 */
     lv_obj_remove_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
-
-    return box;
+    return lbl;
 }
 
 /** LED 状态灯：彩色圆点 + 暗灰外环。 */

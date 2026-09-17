@@ -84,15 +84,16 @@ static lv_obj_t * build_weather_card(lv_obj_t * parent,
     lv_obj_set_width(card, lv_pct(100));
     lv_obj_set_height(card, 165);
     lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(card, LV_OBJ_FLAG_OVERFLOW_VISIBLE);   /* 标题画在卡外 */
     ui_add_corner_tick(card, COL_ACCENT);
 
     const lv_font_t * fs = font_sm != NULL ? font_sm : &lv_font_montserrat_14;
     const lv_font_t * fl = font_lg != NULL ? font_lg : &lv_font_montserrat_20;
 
-    /* Top-left kicker: what this card is. */
-    lv_obj_t * kick = ui_make_kicker(card, "室外 OUTDOOR · 深圳 SHENZHEN",
-                                     COL_LABEL, font_sm);
-    lv_obj_align(kick, LV_ALIGN_TOP_LEFT, 20, 14);
+    /* 标题改为**骑在边框上**（工业 HMI 语言）。
+     * 本卡内容全用 lv_obj_align 绝对定位，故换标题**不影响任何排版流** ——
+     * 不像总览页那样需要重算纵向预算。 */
+    ui_riding_title(card, "室外 OUTDOOR · 深圳 SHENZHEN", font_sm);
 
     /* Top-right: fetch moment HH:MM. */
     wx_time_label = lv_label_create(card);
@@ -166,11 +167,10 @@ static lv_obj_t * build_metric_card(lv_obj_t * parent, const char * kicker,
     lv_obj_set_style_pad_left(card, 14, 0);
     lv_obj_set_style_pad_right(card, 14, 0);
     lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(card, LV_OBJ_FLAG_OVERFLOW_VISIBLE);   /* 标题画在卡外 */
     ui_add_corner_tick(card, tick_col);
 
-    lv_obj_t * kick = ui_make_kicker(card, kicker, COL_LABEL, font_sm);
-    lv_obj_align(kick, LV_ALIGN_TOP_LEFT, 14, 14);
-    lv_obj_set_style_text_letter_space(kick, 2, 0);
+    ui_riding_title(card, kicker, font_sm);
 
     lv_obj_t * value = lv_label_create(card);
     lv_label_set_text(value, "--");
@@ -197,6 +197,9 @@ void dashboard_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
     lv_obj_set_style_pad_hor(page_root, 18, 0);
     lv_obj_set_style_pad_row(page_root, 14, 0);
     lv_obj_remove_flag(page_root, LV_OBJ_FLAG_SCROLLABLE);
+    /* 骑边框标题画在本容器子对象之外，故整条祖先链都要允许溢出，
+     * 否则标题被裁掉且日志无痕迹（ui_titled_box 只设了盒自己那一层）。 */
+    lv_obj_add_flag(page_root, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 
     ui_make_kicker(page_root, "环境总览 ENVIRONMENT · 深圳", COL_ACCENT, font_sm);
 
@@ -209,6 +212,7 @@ void dashboard_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
     lv_obj_set_height(row, LV_SIZE_CONTENT);
     lv_obj_set_layout(row, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_add_flag(row, LV_OBJ_FLAG_OVERFLOW_VISIBLE);   /* 同上：标题要穿过去 */
     lv_obj_set_style_pad_column(row, 12, 0);
     lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
