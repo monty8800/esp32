@@ -20,6 +20,7 @@
 #include "lvgl.h"
 
 #include "ui_theme.h"
+#include "ui_fonts.h"
 #include "overview_page.h"
 
 #define OV_SALES_CELLS 3
@@ -114,27 +115,30 @@ static void set_cell(ov_cell_t * c, const char * value, const char * sub, lv_col
     ui_set_label_cached(c->sub,   c->sub_cache,   sizeof(c->sub_cache),   sub);
 }
 
-/** 一张紧凑卡片：kicker 标题 + 大字 + 副行。 */
+/** 工业读数盒：标题骑在边框上 + 大读数 + 副行。
+ *
+ * 与旧版（kicker 在盒内）的区别：
+ *   - 标题**骑在盒子上边框上**、底色与屏底一致以切断边框（工业 HMI 惯用法）
+ *   - ⚠️ 标题占盒子上方约 13px。**调用方的行高与行间距必须留出这个余量**，
+ *     否则标题会压到上一个带的内容（效果图第一版就踩过，三格底部被切）。
+ *   - 大读数色改为 COL_ACCENT（琥珀磷光）；字体由调用方给：
+ *     销售格用 34px 纯数字字体（font_num_34），事务格用 20px 中文字体。 */
 static void build_cell(lv_obj_t * parent, ov_cell_t * c, const char * title,
-                       const lv_font_t * font_sm, const lv_font_t * font_lg)
+                       const lv_font_t * font_sm, const lv_font_t * font_val)
 {
-    lv_obj_t * card = lv_obj_create(parent);
-    ui_style_card(card);
+    lv_obj_t * card = ui_titled_box(parent, title, font_sm);
     lv_obj_set_flex_grow(card, 1);
     lv_obj_set_height(card, lv_pct(100));
     lv_obj_set_layout(card, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(card, LV_FLEX_ALIGN_SPACE_BETWEEN,
                           LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_all(card, 8, 0);
+    lv_obj_set_style_pad_all(card, 7, 0);
     lv_obj_set_style_pad_row(card, 0, 0);
-    lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-
-    ui_make_kicker(card, title, COL_TEXT_DIM, font_sm);
 
     c->value = lv_label_create(card);
-    lv_obj_set_style_text_font(c->value, font_lg, 0);
-    lv_obj_set_style_text_color(c->value, COL_TEXT_DIM, 0);
+    lv_obj_set_style_text_font(c->value, font_val, 0);
+    lv_obj_set_style_text_color(c->value, COL_ACCENT, 0);
     lv_label_set_text(c->value, "--");
     c->value_cache[0] = '\0';
 
@@ -148,7 +152,6 @@ static void build_cell(lv_obj_t * parent, ov_cell_t * c, const char * title,
     c->card = card;
 }
 
-/** 列表一行：左名称 + 右侧「数值 + 趋势」；行高固定 20px 以求紧凑。 */
 static void build_line(lv_obj_t * parent, ov_line_t * L, const lv_font_t * font_sm)
 {
     lv_obj_t * row = lv_obj_create(parent);
@@ -256,51 +259,38 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
     lv_obj_set_flex_align(page_root, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_hor(page_root, 12, 0);
-    lv_obj_set_style_pad_top(page_root, 6, 0);
-    lv_obj_set_style_pad_row(page_root, 6, 0);
+    /* 纵向预算（可用 436px）：pad_top 16 + 状态行 24 + 销售 90 + 事务 76
+     * + 行间距 10x3 = 236，剩 200 给平台/国家两列（含其 13px 标题位）。 */
+    lv_obj_set_style_pad_top(page_root, 16, 0);
+    lv_obj_set_style_pad_row(page_root, 10, 0);
     lv_obj_remove_flag(page_root, LV_OBJ_FLAG_SCROLLABLE);   /* 一屏放下，不滚动 */
 
-    /* ---- 顶部一行：左 kicker + 右「刷新」按钮 ----
-     * 按钮放这里而不是底部事务格旁：视线自然从标题开始，且不占用三格的功能位。
-     * 高度 26px（比 kicker 单独占位多 6px），已在 list_lines 的计算里留出余量。 */
-    lv_obj_t * head_row = lv_obj_create(page_root);
-    lv_obj_remove_style_all(head_row);
-    lv_obj_set_width(head_row, lv_pct(100));
-    lv_obj_set_height(head_row, 26);
-    lv_obj_set_layout(head_row, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(head_row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(head_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
+    /* ---- 顶部状态行：运营状态（左）+ 刷新按键（右）----
+     *
+     * 工业风下**不再有页面级 kicker**（原「事务总览 OVERVIEW」）。
+     * 理由：480px 上纵向空间是本改版最紧张的资源 —— 工业风的盒子标题要骑在
+     * 边框上、每个带多吃 13px。设备标识由外壳顶栏承担（step 5），
+     * 页面归属由底部导航标签承担，页面内再重复一遍标题是纯浪费。
+     * 省下的 26px + 间距正好补上各带标题所需的空间。 */
+    lv_obj_t * status_row = lv_obj_create(page_root);
+    lv_obj_remove_style_all(status_row);
+    lv_obj_set_width(status_row, lv_pct(100));
+    lv_obj_set_height(status_row, 24);
+    lv_obj_set_layout(status_row, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(status_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(status_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_remove_flag(head_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(status_row, LV_OBJ_FLAG_SCROLLABLE);
 
-    ui_make_kicker(head_row, "事务总览 OVERVIEW", COL_ACCENT, font_sm);
-
-    refresh_btn = lv_obj_create(head_row);
-    lv_obj_remove_style_all(refresh_btn);
-    lv_obj_set_size(refresh_btn, 80, 26);
-    lv_obj_set_style_bg_color(refresh_btn, COL_PANEL_LT, 0);
-    lv_obj_set_style_bg_opa(refresh_btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(refresh_btn, 6, 0);
-    lv_obj_set_style_border_color(refresh_btn, COL_BORDER, 0);
-    lv_obj_set_style_border_width(refresh_btn, 1, 0);
-    lv_obj_add_flag(refresh_btn, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(refresh_btn, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_layout(refresh_btn, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_align(refresh_btn, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    refresh_lbl = lv_label_create(refresh_btn);
-    lv_obj_set_style_text_font(refresh_lbl, font_sm, 0);
-    lv_obj_set_style_text_color(refresh_lbl, COL_ACCENT, 0);
-    lv_label_set_text(refresh_lbl, "刷新");
-    refresh_cache[0] = '\0';
-
-    lv_obj_add_event_cb(refresh_btn, refresh_click_cb, LV_EVENT_CLICKED, NULL);
-
-    status_lbl = lv_label_create(page_root);
+    status_lbl = lv_label_create(status_row);
     lv_obj_set_style_text_font(status_lbl, font_sm, 0);
     lv_obj_set_style_text_color(status_lbl, COL_TEXT_DIM, 0);
     lv_label_set_text(status_lbl, "正在获取数据…");
+    refresh_btn = ui_bevel_button(status_row, "刷新", font_sm);
+    lv_obj_set_size(refresh_btn, 76, 24);
+    refresh_lbl = lv_obj_get_child(refresh_btn, 0);
+    refresh_cache[0] = '\0';
+    lv_obj_add_event_cb(refresh_btn, refresh_click_cb, LV_EVENT_CLICKED, NULL);
 
     /* ---- 过期/离线横幅：默认隐藏，出问题时才占位 ----
      *
@@ -344,13 +334,17 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
     lv_obj_t * sales_row = lv_obj_create(page_root);
     lv_obj_remove_style_all(sales_row);
     lv_obj_set_width(sales_row, lv_pct(100));
-    lv_obj_set_height(sales_row, 86);
+    lv_obj_set_height(sales_row, 90);
+    lv_obj_set_style_pad_top(sales_row, 13, 0);   /* 给骑在边框上的标题留位 */
+    lv_obj_add_flag(sales_row, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_set_layout(sales_row, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(sales_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_column(sales_row, 8, 0);
     lv_obj_remove_flag(sales_row, LV_OBJ_FLAG_SCROLLABLE);
     for(int i = 0; i < OV_SALES_CELLS; i++)
-        build_cell(sales_row, &sales_cells[i], OV_SALES_TITLES[i], font_sm, font_lg);
+        /* 销售：34px 纯数字磷光读数 */
+        build_cell(sales_row, &sales_cells[i], OV_SALES_TITLES[i], font_sm,
+                   ui_fonts_num());
 
     /* ---- 第二段：平台 / 国家 两列并排（吃掉剩余高度）---- */
     lists_row = lv_obj_create(page_root);
@@ -360,6 +354,8 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
     lv_obj_set_layout(lists_row, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(lists_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_column(lists_row, 10, 0);
+    lv_obj_set_style_pad_top(lists_row, 13, 0);   /* 同上：标题位 */
+    lv_obj_add_flag(lists_row, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_remove_flag(lists_row, LV_OBJ_FLAG_SCROLLABLE);
 
     for(int col = 0; col < 2; col++) {
@@ -409,12 +405,15 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
     lv_obj_t * txn_row = lv_obj_create(page_root);
     lv_obj_remove_style_all(txn_row);
     lv_obj_set_width(txn_row, lv_pct(100));
-    lv_obj_set_height(txn_row, 72);
+    lv_obj_set_height(txn_row, 76);
+    lv_obj_set_style_pad_top(txn_row, 13, 0);
+    lv_obj_add_flag(txn_row, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_set_layout(txn_row, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(txn_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_column(txn_row, 8, 0);
     lv_obj_remove_flag(txn_row, LV_OBJ_FLAG_SCROLLABLE);
     for(int i = 0; i < OV_TXN_CELLS; i++)
+        /* 事务盒小得多，用 20px 中文字体（34px 会撑破盒高） */
         build_cell(txn_row, &txn_cells[i], OV_TXN_TITLES[i], font_sm, font_lg);
 }
 

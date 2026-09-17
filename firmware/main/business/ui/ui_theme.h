@@ -96,6 +96,10 @@ static inline lv_obj_t * ui_titled_box(lv_obj_t * parent, const char * title,
     lv_obj_t * box = lv_obj_create(parent);
     ui_style_card(box);
     lv_obj_remove_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+    /* 标题画在盒子**外面**（y 负偏移），故必须允许子对象溢出边界 ——
+     * 否则标题会被父级裁掉、整个不显示。这个错误在日志里完全看不出来，
+     * 只能靠真机眼睛发现，所以在这里主动设上。 */
+    lv_obj_add_flag(box, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 
     lv_obj_t * lbl = lv_label_create(box);
     lv_label_set_text(lbl, title);
