@@ -86,8 +86,13 @@
 
 ## 四、实施顺序（逐项暂停，等用户确认）
 
-1. **主题层** `ui_theme.h`：新配色 + `ui_titled_box` / `ui_led` / `ui_bevel_button`
-2. **字库**：生成 `font_num`（34px 数字子集），接入 `CMakeLists.txt` 与 `app_main.c` 的字体加载
+1. ~~**主题层** `ui_theme.h`：新配色 + `ui_titled_box` / `ui_led` / `ui_bevel_button`~~
+   ✅ **完成**（`4a6b4c6` 前后）。策略：**保留颜色名只换色值** ⇒ 四页无需逐处改引用即整体换肤。
+2. ~~**字库**：生成 34px 数字子集~~
+   ✅ **完成**：`fonts/font_num_34.c`（18 符号，23KB 源码 / 13KB .obj），
+   已入 `gen_fonts.sh` 的 step 3/3、`CMakeLists.txt` SRCS、`ui_fonts.h`（`ui_fonts_num()`）。
+   ⚠️ 因尚无页面引用，`--gc-sections` 暂时不把它放进固件 —— **属预期**，
+   step 3 起自动拉入。
 3. **总览页** `overview_page.c`：按上面几何重排（**唯一需要重算 `list_lines` 的页面**）
 4. **驾驶舱 / 设备 / 服务端** 三页：套用主题与组件
 5. **shell** `ui_shell.c`（若底栏/状态栏风格也要统一）

@@ -41,7 +41,7 @@ python3 extract_symbols.py
 
 SYMBOLS="$(cat symbols.txt)"
 SYMBOLS_LG="$(cat symbols_lg.txt)"
-echo "[fonts] step 2/2: 生成位图字体 (4bpp, --no-compress)"
+echo "[fonts] step 2/3: 生成位图字体 (4bpp, --no-compress)"
 
 for SIZE in 16 20; do
     if [ "$SIZE" = 16 ]; then SYM="$SYMBOLS"; else SYM="$SYMBOLS_LG"; fi
@@ -57,5 +57,22 @@ for SIZE in 16 20; do
         -o "font_cjk_${SIZE}.c"
 done
 
+# ---- 34px 纯数字读数（工业 HMI 的大读数，2026-09-18 新增）----
+#
+# 只含数字与少量符号，**刻意不含中文** —— 子集越小 flash 越省（约 10KB）。
+# 大读数旁的单位（件/单）由 16px 正文字体单独绘制，故此处不需要中文字形。
+# 若要在大读数里直接排版中文，必须把该字加进 NUM_SYMBOLS。
+NUM_SYMBOLS="0123456789./%+-:℃"
+echo "[fonts] step 3/3: 生成 34px 数字读数字体（${#NUM_SYMBOLS} 个符号）"
+npx --yes lv_font_conv \
+    --font "$FONT_TTF" \
+    --size 34 \
+    --bpp 4 \
+    --format lvgl \
+    --no-compress \
+    --lv-include "lvgl.h" \
+    --symbols "$NUM_SYMBOLS" \
+    -o "font_num_34.c"
+
 echo "[fonts] done:"
-ls -l font_cjk_16.c font_cjk_20.c
+ls -l font_cjk_16.c font_cjk_20.c font_num_34.c
