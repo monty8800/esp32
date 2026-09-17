@@ -34,17 +34,14 @@ static bool rendered = false;
  * Small builders
  *----------------------------*/
 
+/** 状态圆点 —— 直接复用主题层的 ui_led()。
+ *
+ * 原先是本文件自己的实现（无外环），与外壳的 PWR/NET 灯属于**两套并存的
+ * 指示语言**。改为走 ui_led() 后带上暗色外环，四页与外壳共用同一套语言。
+ * 尺寸参数原样透传，故**布局零影响**。 */
 static lv_obj_t * make_dot(lv_obj_t * parent, int size, lv_color_t col)
 {
-    lv_obj_t * dot = lv_obj_create(parent);
-    lv_obj_remove_style_all(dot);
-    lv_obj_set_size(dot, size, size);
-    lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(dot, col, 0);
-    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
-    lv_obj_remove_flag(dot, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
-    return dot;
+    return ui_led(parent, col, size);
 }
 
 static void build_summary(void)
@@ -126,7 +123,8 @@ static void build_host_row(const server_host_t * h)
                           LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(left, 8, 0);
 
-    make_dot(left, 10, h->online ? COL_ACCENT : COL_BORDER);
+    /* 绿=在线 红=离线，与外壳 NET 灯同一语义（琥珀留给「注意/待确认」）*/
+    make_dot(left, 10, h->online ? COL_GREEN : COL_RED);
 
     lv_obj_t * name = lv_label_create(left);
     lv_label_set_text(name, h->name[0] != '\0' ? h->name : h->id);
@@ -144,7 +142,7 @@ static void build_host_row(const server_host_t * h)
     }
     lv_obj_t * lat_lbl = lv_label_create(top);
     lv_label_set_text(lat_lbl, lat);
-    lv_obj_set_style_text_color(lat_lbl, h->online ? COL_ACCENT : COL_TEXT_DIM, 0);
+    lv_obj_set_style_text_color(lat_lbl, h->online ? COL_GREEN : COL_RED, 0);
     lv_obj_set_style_text_font(lat_lbl, f14, 0);
 
     /*--- Description line (dim, wrapped) ---*/
@@ -225,7 +223,7 @@ static void build_host_row(const server_host_t * h)
         int online_count = 0;
         for(int i = 0; i < h->probe_count; i++) {
             if(h->probes[i].online) online_count++;
-            make_dot(probes, 7, h->probes[i].online ? COL_ACCENT : COL_BORDER);
+            make_dot(probes, 7, h->probes[i].online ? COL_GREEN : COL_RED);
         }
 
         char cnt[16];
