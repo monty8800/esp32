@@ -91,7 +91,7 @@ static lv_obj_t * build_weather_card(lv_obj_t * parent,
 
     /* Top-left kicker: what this card is. */
     lv_obj_t * kick = ui_make_kicker(card, "室外 OUTDOOR · 深圳 SHENZHEN",
-                                     COL_TEXT_DIM, font_sm);
+                                     COL_LABEL, font_sm);
     lv_obj_align(kick, LV_ALIGN_TOP_LEFT, 20, 14);
 
     /* Top-right: fetch moment HH:MM. */
@@ -168,7 +168,7 @@ static lv_obj_t * build_metric_card(lv_obj_t * parent, const char * kicker,
     lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     ui_add_corner_tick(card, tick_col);
 
-    lv_obj_t * kick = ui_make_kicker(card, kicker, COL_TEXT_DIM, font_sm);
+    lv_obj_t * kick = ui_make_kicker(card, kicker, COL_LABEL, font_sm);
     lv_obj_align(kick, LV_ALIGN_TOP_LEFT, 14, 14);
     lv_obj_set_style_text_letter_space(kick, 2, 0);
 
