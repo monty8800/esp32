@@ -22,7 +22,8 @@ static lv_obj_t * time_label;
 static lv_obj_t * ha_status_label;
 static lv_obj_t * env_temp_label;
 static lv_obj_t * env_hum_label;
-static lv_obj_t * wifi_icon_label;
+static lv_obj_t * wifi_led;          /* NET 联网指示灯（绿=正常 红=断线）*/
+static lv_obj_t * pwr_led;           /* PWR 上电指示灯（恒绿）*/
 
 static char time_cache[UI_CACHE_LEN] = "";
 static char status_cache[UI_CACHE_LEN] = "";
@@ -121,11 +122,16 @@ void ui_shell_create(const lv_font_t * font_sm)
 
     const lv_font_t * env_font = shell_font != NULL ? shell_font : &lv_font_montserrat_14;
 
-    /* WiFi connection icon (first in the cluster). */
-    wifi_icon_label = lv_label_create(left_cluster);
-    lv_label_set_text(wifi_icon_label, LV_SYMBOL_WIFI);
-    lv_obj_set_style_text_color(wifi_icon_label, COL_AMBER, 0);
-    lv_obj_set_style_text_font(wifi_icon_label, env_font, 0);
+    /* 状态灯 —— 工业 HMI 的指示语言：**灯的颜色就是状态，不必再写文字**。
+     * PWR = 上电（恒绿，实体面板都有这么一盏）；
+     * NET = 联网，由 ui_shell_set_wifi() 驱动。
+     *
+     * 用灯替代原来的 WiFi 字形：宽度更省，语义也更接近实体设备。
+     * 注意灯是 ui_led() 创建的 **对象**而非 label，故 setter 里改的是
+     * bg_color 而不是 text_color —— 这是本次唯一需要同步改的地方。 */
+    pwr_led = ui_led(left_cluster, COL_GREEN, 11);
+    (void)pwr_led;   /* 恒绿，无需再设置；保留引用以备将来接电源/故障位 */
+    wifi_led = ui_led(left_cluster, COL_RED, 11);
 
     /* Clock. */
     time_label = lv_label_create(left_cluster);
@@ -212,6 +218,38 @@ void ui_shell_create(const lv_font_t * font_sm)
     }
 
     set_dots(0);
+
+    /* ---- 金属 bezel：4 条**覆盖**在内容之上的边缘带 ----
+     *
+     * ⚠️ 为什么不用「给 scr 加边框」这种显然的做法：
+     * 边框会缩小 scr 的内容区，从而把总览页**刚算好的纵向预算**（平台/国家
+     * 能显示几行）挤坏。而我无法看到屏幕、也就无法验证重排后的行数是否还合适。
+     * 覆盖带与实体 bezel 遮住屏边是同一种效果，且**对布局零影响** ——
+     * 这 4px 落在各页自己的 padding 内，不会压到任何文字。
+     *
+     * 必须**最后创建**才能在 tileview 之上；move_foreground 在这里没用
+     * （后续创建的 tileview 仍会盖在它上面）。 */
+    for(int i = 0; i < 4; i++) {
+        lv_obj_t * bz = lv_obj_create(scr);
+        lv_obj_remove_style_all(bz);
+        lv_obj_set_style_bg_color(bz, COL_BEZEL, 0);
+        lv_obj_set_style_bg_opa(bz, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(bz, COL_BEZEL_LT, 0);
+        lv_obj_set_style_border_width(bz, 1, 0);
+        lv_obj_remove_flag(bz, LV_OBJ_FLAG_CLICKABLE);   /* 触摸要能穿透 */
+        lv_obj_remove_flag(bz, LV_OBJ_FLAG_SCROLLABLE);
+        switch(i) {
+            case 0: lv_obj_set_size(bz, lv_pct(100), 4);
+                    lv_obj_align(bz, LV_ALIGN_TOP_MID, 0, 0); break;
+            case 1: lv_obj_set_size(bz, lv_pct(100), 4);
+                    lv_obj_align(bz, LV_ALIGN_BOTTOM_MID, 0, 0); break;
+            case 2: lv_obj_set_size(bz, 4, lv_pct(100));
+                    lv_obj_align(bz, LV_ALIGN_LEFT_MID, 0, 0); break;
+            default:lv_obj_set_size(bz, 4, lv_pct(100));
+                    lv_obj_align(bz, LV_ALIGN_RIGHT_MID, 0, 0); break;
+        }
+    }
+
 }
 
 /*-----------------------------
@@ -244,11 +282,13 @@ void ui_shell_set_ha_status(const char * text)
 void ui_shell_set_wifi(bool connected)
 {
     static int last = -1;
-    if(wifi_icon_label == NULL) return;
+    if(wifi_led == NULL) return;
     if((int)connected == last) return;
     last = (int)connected;
-    lv_obj_set_style_text_color(wifi_icon_label,
-                                connected ? COL_ACCENT : COL_AMBER, 0);
+    /* 实体指示灯的语义：绿 = 正常，红 = 断线。
+     * 刻意不用 COL_AMBER —— 琥珀在工业面板上表示「注意 / 待确认」，
+     * 而断网是故障，用红色才对得上操作员的直觉。 */
+    lv_obj_set_style_bg_color(wifi_led, connected ? COL_GREEN : COL_RED, 0);
 }
 
 void ui_shell_set_time(const char * hhmm)
