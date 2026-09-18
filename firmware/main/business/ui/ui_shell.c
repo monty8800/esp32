@@ -163,7 +163,15 @@ void ui_shell_create(const lv_font_t * font_sm)
         lv_obj_t * dot = lv_obj_create(bar);
         lv_obj_remove_style_all(dot);
         lv_obj_set_size(dot, 8, 8);
-        lv_obj_align(dot, LV_ALIGN_RIGHT_MID, -i * 20, 0);
+        /* ⚠️ 圆点按**从左到右**对应第 0..N 页。
+         *
+         * 原先是 `-i * 20` —— 那也是从 RIGHT_MID 起算，于是 dots[0] 落在**最右**、
+         * dots[3] 落在最左，整组指示器的方向与页面顺序**相反**：
+         * 向右翻页（总览→驾驶舱→…）时高亮点却向左移动。
+         * 功能上「当前页有高亮」是对的，但顺序反了，容易读错。
+         * 改为 -(N-1-i)*20，使 dots[0] 在最左，与页面顺序一致。 */
+        lv_obj_align(dot, LV_ALIGN_RIGHT_MID,
+                     -(UI_SHELL_TILE_COUNT - 1 - i) * 20, 0);
         lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_color(dot, COL_BORDER, 0);
         lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
