@@ -284,7 +284,7 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
                           LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_hor(page_root, 12, 0);
     /* 纵向预算 —— 按**实测字体行高**核算（不是估算）：
-     *   font_num_30 line_height=29（实测；34px 版加中文字形后曾是 32）
+     *   font_num_28 line_height=27（实测）
      *   font_cjk_16 = 19,  font_cjk_20 = 23
      *   ⚠️ 改字库符号集会改变 line_height，进而改变这里的所有高度 ——
      *      我上一轮加「件」之后没重测，仍按 26 算，导致本月卡片继续重叠 1px。
@@ -295,7 +295,7 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
      *   8 行需 8x20 + 7x1 = 167 ⇒ 余 7px
      *
      * 销售格 106 → 卡片 93 → 内容 93-14-2 = 77；本月副行折两行，
-     *   需 29 + 38 = 67（副标签**显式给高 38**，见 build_cell 注释）⇒ 余 10px
+     *   需 27 + 38（副标签**显式给高 38**，见 build_cell 注释）
      * 事务格 81 → 卡片 68 → 内容 52；需 23 + 19 = 42 ⇒ 间距 10px
      */
     lv_obj_set_style_pad_top(page_root, 12, 0);

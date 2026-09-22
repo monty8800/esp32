@@ -32,7 +32,7 @@ idf_component_register(
         "business/third_party/cjson/cJSON.c"
         "fonts/font_cjk_16.c"
         "fonts/font_cjk_20.c"
-        "fonts/font_num_30.c"
+        "fonts/font_num_28.c"
     INCLUDE_DIRS
         "."                 # bsp_*.h, ui_fonts.h, ui_drain.h live here
         "${CMAKE_CURRENT_SOURCE_DIR}/.."   # firmware/lv_conf.h
