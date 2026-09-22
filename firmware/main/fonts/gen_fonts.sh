@@ -66,16 +66,16 @@ done
 #    + 同一个 34px 字体渲染整条字符串 —— 单位字不在子集里就会渲染成缺字方块。
 #    2026-09-18 真机照片暴露过这个问题（件/单/万/亿/天 全缺），故一并加入。
 NUM_SYMBOLS="0123456789./%+-:℃件单万亿天个"   # 注意：空格另用 --range 0x20 补
-echo "[fonts] step 3/3: 生成 34px 数字读数字体（${#NUM_SYMBOLS} 个符号）"
+echo "[fonts] step 3/3: 生成 30px 数字读数字体（${#NUM_SYMBOLS} 个符号）"
 npx --yes lv_font_conv \
     --font "$FONT_TTF" \
-    --size 34 \
+    --size 30 \
     --bpp 4 \
     --format lvgl \
     --no-compress \
     --lv-include "lvgl.h" \
     --symbols "$NUM_SYMBOLS" \
-    -o "font_num_34.c"
+    -o "font_num_30.c"
 
 echo "[fonts] done:"
-ls -l font_cjk_16.c font_cjk_20.c font_num_34.c
+ls -l font_cjk_16.c font_cjk_20.c font_num_30.c
