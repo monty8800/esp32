@@ -603,7 +603,12 @@ void overview_page_update(const panel_snapshot_t * s)
     if(ops_usable && s->month_days > 0) {
         snprintf(value, sizeof(value), "%.0f 件", s->month_units);
         fmt_rmb(s->month_rmb, rmb, sizeof(rmb));
-        snprintf(sub, sizeof(sub), "%.0f单 RMB%s · %d天",
+        /* ⚠️ 显式换行，不要交给自动折行。
+         * 自动折行按字符宽度断，会把「RMB164.2万」拆成「RMB164.」+「2万」，
+         * 数字被拦腰截断、很难读。这里在语义边界断成两行：
+         *   第 1 行 = 单量，第 2 行 = 金额 + 天数
+         * 副标签高度已显式给 38（两行），正好容纳这两行。 */
+        snprintf(sub, sizeof(sub), "%.0f单\nRMB%s · %d天",
                  s->month_orders, rmb, s->month_days);
         set_cell(&sales_cells[2], value, sub, ops_col);
     }
