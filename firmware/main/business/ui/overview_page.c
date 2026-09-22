@@ -84,6 +84,7 @@ static lv_obj_t *  list_hint_lbl;
 static char        list_hint_cache[OV_HINT_CACHE_LEN];
 static ov_cell_t   sales_cells[OV_SALES_CELLS];
 static ov_cell_t   txn_cells[OV_TXN_CELLS];
+static lv_obj_t *  lists_box0;                /* 平台列盒（诊断用，看实际可用高）*/
 static ov_line_t   plat_lines[OV_LINES];
 static ov_line_t   ctry_lines[OV_LINES];
 
@@ -124,7 +125,8 @@ static void set_cell(ov_cell_t * c, const char * value, const char * sub, lv_col
  *   - 大读数色改为 COL_ACCENT（琥珀磷光）；字体由调用方给：
  *     销售格用 34px 纯数字字体（font_num_34），事务格用 20px 中文字体。 */
 static void build_cell(lv_obj_t * parent, ov_cell_t * c, const char * title,
-                       const lv_font_t * font_sm, const lv_font_t * font_val)
+                       const lv_font_t * font_sm, const lv_font_t * font_val,
+                       int sub_h)
 {
     lv_obj_t * card = ui_titled_box(parent, title, font_sm);
     lv_obj_set_flex_grow(card, 1);
@@ -144,6 +146,16 @@ static void build_cell(lv_obj_t * parent, ov_cell_t * c, const char * title,
 
     c->sub = lv_label_create(card);
     lv_obj_set_width(c->sub, lv_pct(100));   /* 限宽：长文案折行而不是溢出卡片 */
+    /* ⚠️⚠️ 必须**显式给定高度**，不能靠 LVGL 自动计算。
+     *
+     * 实测（串口诊断）：本月副行「8656单 RMB164.2万 · 21天」在 128px 卡宽里
+     * 渲染成两行，但 lv_obj_get_height() 只报 **19**（一行）—— LVGL 没把折行后的
+     * 高度算进父级 flex 布局。于是 flex 只按 19px 预留，把剩余 26px 当空隙，
+     * 两行文字就画到了数值上面 ⇒ **真机上看到的「本月文字重叠」**。
+     *
+     * 这与「调大行高」是两件事：容量再大，只要预留量算少了一行，照样重叠。
+     * 故这里按实际行数显式给高：销售格两行(38)，事务格一行(19)。 */
+    lv_obj_set_height(c->sub, sub_h);
     lv_obj_set_style_text_font(c->sub, font_sm, 0);
     lv_obj_set_style_text_color(c->sub, COL_TEXT_DIM, 0);
     lv_label_set_text(c->sub, "");
@@ -157,7 +169,8 @@ static void build_line(lv_obj_t * parent, ov_line_t * L, const lv_font_t * font_
     lv_obj_t * row = lv_obj_create(parent);
     lv_obj_remove_style_all(row);
     lv_obj_set_width(row, lv_pct(100));
-    lv_obj_set_height(row, 20);
+    /* 行高 19 = font_cjk_16 的 line_height —— 再小就会裁字，再大 8 行就装不下 */
+    lv_obj_set_height(row, 19);
     lv_obj_set_layout(row, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN,
@@ -358,7 +371,7 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
     lv_obj_t * sales_row = lv_obj_create(page_root);
     lv_obj_remove_style_all(sales_row);
     lv_obj_set_width(sales_row, lv_pct(100));
-    lv_obj_set_height(sales_row, 104);
+    lv_obj_set_height(sales_row, 106);
     lv_obj_set_style_pad_top(sales_row, 13, 0);   /* 给骑在边框上的标题留位 */
     lv_obj_add_flag(sales_row, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_set_layout(sales_row, LV_LAYOUT_FLEX);
@@ -367,8 +380,9 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
     lv_obj_remove_flag(sales_row, LV_OBJ_FLAG_SCROLLABLE);
     for(int i = 0; i < OV_SALES_CELLS; i++)
         /* 销售：34px 纯数字磷光读数 */
+        /* 副标签给**两行**高度：本月副行必然会折两行（实测） */
         build_cell(sales_row, &sales_cells[i], OV_SALES_TITLES[i], font_sm,
-                   ui_fonts_num());
+                   ui_fonts_num(), 38);
 
     /* ---- 第二段：平台 / 国家 两列并排（吃掉剩余高度）---- */
     lists_row = lv_obj_create(page_root);
@@ -398,6 +412,7 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
         lv_obj_t * box = ui_titled_box(lists_row,
                                        col == 0 ? "平台 · 今日" : "国家 · 今日",
                                        font_sm);
+        if(col == 0) lists_box0 = box;
         lv_obj_set_flex_grow(box, 1);
         lv_obj_set_height(box, lv_pct(100));
         lv_obj_set_layout(box, LV_LAYOUT_FLEX);
@@ -448,7 +463,8 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
     lv_obj_remove_flag(txn_row, LV_OBJ_FLAG_SCROLLABLE);
     for(int i = 0; i < OV_TXN_CELLS; i++)
         /* 事务盒小得多，用 20px 中文字体（34px 会撑破盒高） */
-        build_cell(txn_row, &txn_cells[i], OV_TXN_TITLES[i], font_sm, font_lg);
+        /* 事务副行实测均为一行（缺13 低14 / 最久 482h / 2项异常 · 项目 8） */
+        build_cell(txn_row, &txn_cells[i], OV_TXN_TITLES[i], font_sm, font_lg, 19);
 }
 
 /* --------------------------------------------------------------------------
@@ -708,6 +724,25 @@ void overview_page_update(const panel_snapshot_t * s)
     /* 刷新流程走完 → 复位按钮文案与可点状态。
      * 本函数由 ui_drain 在 panel_seq 变化时调用，而手动刷新**无论成败**都会
      * 自增 seq（见 net_worker.c），所以按钮绝不会卡在「刷新中」出不来。 */
+    /* ---- 一次性布局诊断（2026-09-18 加）----
+     * 我反复用「字体行高 + padding」手算可用高度，但真机两次都显示装不下，
+     * 说明手算有系统性偏差且看不出来。故把 **LVGL 实际算出的高度** 打到串口，
+     * 用真值取代估算。只在第一帧后打一次，不影响常规运行。 */
+    {
+        static bool diag_done;
+        if(!diag_done && sales_cells[0].card != NULL && lists_box0 != NULL) {
+            diag_done = true;
+            fprintf(stderr,
+                    "[ov] 实测高度: 销售卡内容=%d 值标签=%d 副标签=%d | "
+                    "事务卡内容=%d | 列表盒内容=%d\n",
+                    (int)lv_obj_get_content_height(sales_cells[0].card),
+                    (int)lv_obj_get_height(sales_cells[0].value),
+                    (int)lv_obj_get_height(sales_cells[0].sub),
+                    (int)lv_obj_get_content_height(txn_cells[0].card),
+                    (int)lv_obj_get_content_height(lists_box0));
+        }
+    }
+
     if(refresh_busy) {
         refresh_busy = false;
         ui_set_label_cached(refresh_lbl, refresh_cache, sizeof(refresh_cache), "刷新");
