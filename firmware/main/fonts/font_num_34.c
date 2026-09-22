@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Size: 34 px
  * Bpp: 4
- * Opts: --font /System/Library/Fonts/Supplemental/Arial Unicode.ttf --size 34 --bpp 4 --format lvgl --no-compress --lv-include lvgl.h --symbols 0123456789./%+-:℃件单万亿天个 -o font_num_34.c
+ * Opts: --font /System/Library/Fonts/Supplemental/Arial Unicode.ttf --size 34 --bpp 4 --format lvgl --no-compress --lv-include lvgl.h --symbols 0123456789./%+-:℃件单万亿天个 --range 0x20 -o fonts/font_num_34.c
  ******************************************************************************/
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE
@@ -22,6 +22,8 @@
 
 /*Store the image of the glyphs*/
 static LV_ATTRIBUTE_LARGE_CONST const uint8_t glyph_bitmap[] = {
+    /* U+0020 " " */
+
     /* U+0025 "%" */
     0x0, 0x19, 0xef, 0xea, 0x30, 0x0, 0x0, 0x0,
     0x0, 0xbf, 0xb0, 0x0, 0x0, 0x2, 0xef, 0xff,
@@ -825,6 +827,7 @@ static LV_ATTRIBUTE_LARGE_CONST const uint8_t glyph_bitmap[] = {
 
 static const lv_font_fmt_txt_glyph_dsc_t glyph_dsc[] = {
     {.bitmap_index = 0, .adv_w = 0, .box_w = 0, .box_h = 0, .ofs_x = 0, .ofs_y = 0} /* id = 0 reserved */,
+    {.bitmap_index = 0, .adv_w = 151, .box_w = 0, .box_h = 0, .ofs_x = 0, .ofs_y = 0},
     {.bitmap_index = 0, .adv_w = 484, .box_w = 26, .box_h = 24, .ofs_x = 2, .ofs_y = 0},
     {.bitmap_index = 312, .adv_w = 318, .box_w = 17, .box_h = 17, .ofs_x = 1, .ofs_y = 4},
     {.bitmap_index = 457, .adv_w = 181, .box_w = 10, .box_h = 3, .ofs_x = 1, .ofs_y = 7},
@@ -855,17 +858,17 @@ static const lv_font_fmt_txt_glyph_dsc_t glyph_dsc[] = {
  *--------------------*/
 
 static const uint16_t unicode_list_0[] = {
-    0x0, 0x6, 0x8, 0x9, 0xa, 0xb, 0xc, 0xd,
-    0xe, 0xf, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
-    0x20de, 0x4de2, 0x4e05, 0x4e9a, 0x4ed1, 0x5330, 0x5904
+    0x0, 0x5, 0xb, 0xd, 0xe, 0xf, 0x10, 0x11,
+    0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19,
+    0x1a, 0x20e3, 0x4de7, 0x4e0a, 0x4e9f, 0x4ed6, 0x5335, 0x5909
 };
 
 /*Collect the unicode lists and glyph_id offsets*/
 static const lv_font_fmt_txt_cmap_t cmaps[] =
 {
     {
-        .range_start = 37, .range_length = 22789, .glyph_id_start = 1,
-        .unicode_list = unicode_list_0, .glyph_id_ofs_list = NULL, .list_length = 23, .type = LV_FONT_FMT_TXT_CMAP_SPARSE_TINY
+        .range_start = 32, .range_length = 22794, .glyph_id_start = 1,
+        .unicode_list = unicode_list_0, .glyph_id_ofs_list = NULL, .list_length = 24, .type = LV_FONT_FMT_TXT_CMAP_SPARSE_TINY
     }
 };
 

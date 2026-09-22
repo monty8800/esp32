@@ -271,18 +271,20 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
                           LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_hor(page_root, 12, 0);
     /* 纵向预算 —— 按**实测字体行高**核算（不是估算）：
-     *   font_num_34 line_height=26, font_cjk_16=19, font_cjk_20=23
+     *   font_num_34 line_height=32  ← 注意！加中文字形后由 26 涨到 32
+     *   font_cjk_16 = 19,  font_cjk_20 = 23
+     *   ⚠️ 改字库符号集会改变 line_height，进而改变这里的所有高度 ——
+     *      我上一轮加「件」之后没重测，仍按 26 算，导致本月卡片继续重叠 1px。
+     *      **每次动字库文件之后都要重新 grep line_height 并复核本预算。**
      *
-     * 固定：pad_top 12 + 状态行 24 + 销售 98 + 事务 84 + 行间距 8x3 = 242
-     * 剩 194 给平台/国家两列（含 13px 标题位 → 内容 181，8 行需 167，余 14）
+     * 固定：pad_top 12 + 状态行 24 + 销售 104 + 事务 81 + 行间距 8x3 = 245
+     * 剩 191 给平台/国家两列 → 扣 pad_top 11、盒 pad 2x2、边框 2 → 内容 174
+     *   8 行需 8x20 + 7x1 = 167 ⇒ 余 7px
      *
-     * 销售格 98 → 卡片 85 → 内容 85-14=71；本月副行会折成两行，
-     *   需 26 + 19x2 = 64 ⇒ 余 7px（原先 90 时只余 -1px，故真机上文字重叠）
-     * 事务格 84 → 卡片 71 → 内容 57；需 23 + 19 = 42 ⇒ 间距 15px
-     *   （原先 76 时间距仅 7px，远小于销售格的 18px，故肉眼看着挤）
-     *
-     * ⚠️ 改这里之前请先测字体行高 —— 我第一版凭「34px 字体约 40px 高」估算，
-     *    与实测 26 差了 14px，正是重叠没被提前发现的直接原因。 */
+     * 销售格 104 → 卡片 91 → 内容 91-14-2 = 75；本月副行折两行，
+     *   需 32 + 19x2 = 70 ⇒ 余 5px（按旧行高 26 算会得出 69 可用，正好差 1px）
+     * 事务格 81 → 卡片 68 → 内容 52；需 23 + 19 = 42 ⇒ 间距 10px
+     */
     lv_obj_set_style_pad_top(page_root, 12, 0);
     lv_obj_set_style_pad_row(page_root, 8, 0);
     lv_obj_remove_flag(page_root, LV_OBJ_FLAG_SCROLLABLE);   /* 一屏放下，不滚动 */
@@ -356,7 +358,7 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
     lv_obj_t * sales_row = lv_obj_create(page_root);
     lv_obj_remove_style_all(sales_row);
     lv_obj_set_width(sales_row, lv_pct(100));
-    lv_obj_set_height(sales_row, 98);
+    lv_obj_set_height(sales_row, 104);
     lv_obj_set_style_pad_top(sales_row, 13, 0);   /* 给骑在边框上的标题留位 */
     lv_obj_add_flag(sales_row, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_set_layout(sales_row, LV_LAYOUT_FLEX);
@@ -376,7 +378,7 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
     lv_obj_set_layout(lists_row, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(lists_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_column(lists_row, 10, 0);
-    lv_obj_set_style_pad_top(lists_row, 13, 0);   /* 同上：标题位 */
+    lv_obj_set_style_pad_top(lists_row, 11, 0);   /* 同上：标题位 */
     lv_obj_add_flag(lists_row, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_remove_flag(lists_row, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -400,7 +402,7 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
         lv_obj_set_height(box, lv_pct(100));
         lv_obj_set_layout(box, LV_LAYOUT_FLEX);
         lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
-        lv_obj_set_style_pad_all(box, 4, 0);
+        lv_obj_set_style_pad_all(box, 2, 0);
         lv_obj_set_style_pad_row(box, 1, 0);
         for(int i = 0; i < OV_LINES; i++) {
             build_line(box, col == 0 ? &plat_lines[i] : &ctry_lines[i], font_sm);
@@ -437,7 +439,7 @@ void overview_page_create(lv_obj_t * parent, const lv_font_t * font_sm,
     lv_obj_t * txn_row = lv_obj_create(page_root);
     lv_obj_remove_style_all(txn_row);
     lv_obj_set_width(txn_row, lv_pct(100));
-    lv_obj_set_height(txn_row, 84);
+    lv_obj_set_height(txn_row, 81);
     lv_obj_set_style_pad_top(txn_row, 13, 0);
     lv_obj_add_flag(txn_row, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_set_layout(txn_row, LV_LAYOUT_FLEX);
